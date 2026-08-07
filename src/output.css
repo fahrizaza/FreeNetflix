@@ -27,6 +27,7 @@
     --color-black: #000;
     --color-white: #fff;
     --spacing: 0.25rem;
+    --container-md: 28rem;
     --container-2xl: 42rem;
     --container-4xl: 56rem;
     --container-6xl: 72rem;
@@ -359,6 +360,12 @@
   .h-full {
     height: 100%;
   }
+  .max-h-20 {
+    max-height: calc(var(--spacing) * 20);
+  }
+  .max-h-24 {
+    max-height: calc(var(--spacing) * 24);
+  }
   .w-6 {
     width: calc(var(--spacing) * 6);
   }
@@ -377,6 +384,9 @@
   .w-\[240px\] {
     width: 240px;
   }
+  .w-auto {
+    width: auto;
+  }
   .w-full {
     width: 100%;
   }
@@ -391,6 +401,12 @@
   }
   .max-w-\[70\%\] {
     max-width: 70%;
+  }
+  .max-w-full {
+    max-width: 100%;
+  }
+  .max-w-md {
+    max-width: var(--container-md);
   }
   .min-w-0 {
     min-width: 0px;
@@ -685,8 +701,14 @@
   .bg-center {
     background-position: center;
   }
+  .object-contain {
+    object-fit: contain;
+  }
   .object-cover {
     object-fit: cover;
+  }
+  .object-left {
+    object-position: left;
   }
   .p-2 {
     padding: calc(var(--spacing) * 2);
@@ -983,6 +1005,12 @@
   @media (width >= 48rem) {
     .md\:flex {
       display: flex;
+    }
+    .md\:max-h-28 {
+      max-height: calc(var(--spacing) * 28);
+    }
+    .md\:max-h-32 {
+      max-height: calc(var(--spacing) * 32);
     }
     .md\:grid-cols-\[2fr_1fr\] {
       grid-template-columns: 2fr 1fr;

@@ -106,15 +106,33 @@ function normalize(raw, forcedType = "") {
   };
 }
 
+// Logo judul: PNG berlatar transparan, dipakai menumpuk di atas backdrop
+// seperti kartu Netflix. Urutan pilihan: bahasa Indonesia, Inggris, lalu yang
+// tanpa bahasa; kalau sama, yang skornya paling tinggi.
+function pickLogo(logos) {
+  if (!logos?.length) return "";
+
+  const rank = (l) => (l.iso_639_1 === "id" ? 0 : l.iso_639_1 === "en" ? 1 : 2);
+  const best = [...logos].sort(
+    (a, b) => rank(a) - rank(b) || (b.vote_average || 0) - (a.vote_average || 0)
+  )[0];
+
+  return `${IMG}/w500${best.file_path}`;
+}
+
 // Satu request mengambil semua yang kurang: durasi, genre, imdb_id untuk
-// player, jumlah season, dan daftar layanan streaming.
+// player, jumlah season, daftar layanan streaming, dan logo judul.
 async function fetchDetail(item) {
   if (item.detailLoaded) return item;
 
   const kind = item.type === "SHOW" ? "tv" : "movie";
+  // images ikut menumpang di request ini, jadi logo judul tidak menambah request
   const data = await tmdb(
-    `/${kind}/${item.tmdbId}?append_to_response=external_ids,watch/providers`
+    `/${kind}/${item.tmdbId}?append_to_response=external_ids,watch/providers,images` +
+      "&include_image_language=id,en,null"
   );
+
+  item.logo = pickLogo(data.images?.logos);
 
   item.imdbId = data.external_ids?.imdb_id || "";
   item.overview = data.overview || item.overview;
@@ -372,7 +390,7 @@ function openDetail(item) {
           class="absolute right-4 top-4 z-30 flex h-10 w-10 items-center justify-center rounded-full bg-[#181818] text-xl hover:bg-black">&times;</button>
 
         <div class="absolute inset-x-0 bottom-0 z-20 p-6 md:p-10">
-          <h3 class="max-w-[70%] text-3xl font-black tracking-tight drop-shadow-lg md:text-5xl">${esc(item.title)}</h3>
+          <h3 data-title class="max-w-[70%] text-3xl font-black tracking-tight drop-shadow-lg md:text-5xl">${esc(item.title)}</h3>
 
           <div class="mt-5 flex items-center gap-3">
             <button type="button" data-play disabled
@@ -497,6 +515,15 @@ async function loadDetail(item, modal) {
   set("[data-duration]", esc(duration(item)));
   set("[data-overview]", esc(item.overview) || "Sinopsis belum tersedia.");
   set("[data-imdb]", esc(item.imdbId || "-"));
+
+  // judul teks diganti logo resminya; kalau tidak ada, teksnya dibiarkan
+  if (item.logo) {
+    set(
+      "[data-title]",
+      `<img src="${esc(item.logo)}" alt="${esc(item.title)}"
+         class="max-h-20 w-auto max-w-full object-contain object-left drop-shadow-lg md:max-h-28" />`
+    );
+  }
 
   set(
     "[data-genres]",
@@ -793,12 +820,24 @@ function fillHero(item) {
     .filter(Boolean)
     .map((t) => `<span>${esc(t)}</span>`)
     .join("");
-  document.getElementById("hero-desc").textContent = item.providers.length
-    ? `Tersedia di ${item.providers.slice(0, 3).map((p) => p.name).join(", ")}.`
-    : "Belum tersedia di layanan streaming.";
+  document.getElementById("hero-desc").textContent = item.overview || "";
 
   document.getElementById("hero-play").onclick = () => openDetail(item);
   document.getElementById("hero-info").onclick = () => openDetail(item);
+
+  // sinopsis, durasi, dan logo judul baru ada setelah detail dimuat
+  fetchDetail(item)
+    .then(() => {
+      const desc = document.getElementById("hero-desc");
+      if (item.overview) desc.textContent = item.overview;
+
+      if (item.logo) {
+        document.getElementById("hero-title").innerHTML =
+          `<img src="${esc(item.logo)}" alt="${esc(item.title)}"
+             class="max-h-24 w-auto max-w-md object-contain object-left drop-shadow-lg md:max-h-32" />`;
+      }
+    })
+    .catch((err) => console.error("Detail hero gagal dimuat", err));
 }
 
 // ---------- Event global ----------
