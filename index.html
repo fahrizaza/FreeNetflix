@@ -2,59 +2,55 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <link href="src/output.css" rel="stylesheet">
   <link rel="icon" type="image/webp" href="/assets/netflix_logo_icon_170919.png.webp">
   <title>Netflix</title>
 </head>
 <body class="bg-gray-950 text-white">
   <header class="border-b border-slate-800">
-    <nav class="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
-      <a href="#" class="text-xl font-semibold tracking-wide text-red-600">Netflix</a>
+    <nav class="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 md:px-5 md:py-4">
+      <a href="#" class="shrink-0 text-lg font-semibold tracking-wide text-red-600 md:text-xl">Netflix</a>
+
       <div class="hidden space-x-8 text-sm md:flex">
         <a href="#home" class="hover:text-white">Home</a>
         <a href="#series" class="hover:text-white">Series</a>
         <a href="#movies" class="hover:text-white">Movies</a>
         <a href="#new" class="hover:text-white">New &amp; Popular</a>
       </div>
-      <div class="flex items-center gap-4">
-        <form id="search-form" class="flex items-center gap-2">
+
+      <div class="flex min-w-0 items-center gap-2 md:gap-4">
+        <form id="search-form" class="flex min-w-0 items-center gap-2">
           <input
             id="search-input"
             type="search"
             autocomplete="off"
-            placeholder="Cari film atau serial..."
-            class="w-40 rounded border border-neutral-700 bg-black/60 px-3 py-2 text-sm outline-none transition-all placeholder:text-neutral-500 focus:w-56 focus:border-neutral-400"
+            placeholder="Cari film..."
+            class="w-32 min-w-0 rounded border border-neutral-700 bg-black/60 px-3 py-2 text-sm outline-none transition-all placeholder:text-neutral-500 focus:border-neutral-400 sm:w-40 sm:focus:w-56"
           />
-          <button type="submit" class="rounded border border-neutral-700 px-3 py-2 text-sm hover:bg-neutral-800">Search</button>
+          <button type="submit" class="hidden rounded border border-neutral-700 px-3 py-2 text-sm hover:bg-neutral-800 sm:block">Search</button>
         </form>
-        <a href="#login" class="rounded bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500">Sign In</a>
+        <a href="#login" class="shrink-0 rounded bg-red-600 px-3 py-2 text-xs font-medium text-white hover:bg-red-500 md:px-4 md:text-sm">Sign In</a>
       </div>
     </nav>
   </header>
 
   <section
     id="hero"
-    class="m-8 h-[70vh] rounded-4xl bg-gray-900 bg-cover bg-center"
-    style="background-image: linear-gradient(to top, rgba(0,0,0,.85), rgba(0,0,0,.1)),"
+    class="m-4 h-[55vh] rounded-2xl bg-gray-900 bg-cover bg-center md:m-8 md:h-[70vh] md:rounded-4xl"
   >
-    <div class="flex h-full flex-col justify-end p-10">
-      <h1 id="hero-title" class="text-4xl font-bold"></h1>
-      <div id="hero-meta" class="flex flex-row space-x-4 p-2 text-sm text-neutral-300">
-        <span></span>
-        <span></span>
-        <span></span>
-      </div>
-      <p id="hero-desc" class="max-w-2xl text-lg">
-      </p>
-      <div class="mt-4 flex space-x-4">
-        <button id="hero-play" class="rounded-4xl bg-white px-6 py-3 font-bold text-black hover:bg-gray-300">Play</button>
-        <button id="hero-info" class="rounded-4xl bg-gray-600 px-6 py-3 font-bold text-white hover:bg-gray-500">More Info</button>
+    <div class="flex h-full flex-col justify-end p-5 md:p-10">
+      <h1 id="hero-title" class="text-2xl font-bold md:text-4xl"></h1>
+      <div id="hero-meta" class="flex flex-row flex-wrap gap-x-4 py-2 text-xs text-neutral-300 md:text-sm"></div>
+      <p id="hero-desc" class="line-clamp-3 max-w-2xl text-sm md:line-clamp-none md:text-lg"></p>
+      <div class="mt-4 flex space-x-3 md:space-x-4">
+        <button id="hero-play" class="rounded-4xl bg-white px-5 py-2 text-sm font-bold text-black hover:bg-gray-300 md:px-6 md:py-3 md:text-base">Play</button>
+        <button id="hero-info" class="rounded-4xl bg-gray-600 px-5 py-2 text-sm font-bold text-white hover:bg-gray-500 md:px-6 md:py-3 md:text-base">More Info</button>
       </div>
     </div>
   </section>
 
-  <main id="rows" class="pb-16 p-10"></main>
+  <main id="rows" class="pb-16 md:p-10"></main>
 
   <div id="modal" class="hidden"></div>
   <div id="player" class="hidden"></div>

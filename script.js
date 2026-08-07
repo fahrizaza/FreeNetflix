@@ -293,7 +293,7 @@ function cardTemplate(item, opts = {}) {
 
   return `
     <button type="button" data-id="${esc(item.id)}" data-index="${index}"
-      class="group/card w-[240px] shrink-0 snap-start text-left">
+      class="group/card w-[160px] shrink-0 snap-start text-left sm:w-[200px] md:w-[240px]">
       <div class="relative aspect-video overflow-hidden rounded-md bg-neutral-800 transition duration-300 group-hover/card:ring-2 group-hover/card:ring-white/60">
         ${top10Badge}
         ${netflix}
@@ -310,20 +310,20 @@ function cardTemplate(item, opts = {}) {
 }
 
 function skeletonCard() {
-  return `<div class="w-[240px] shrink-0 animate-pulse"><div class="aspect-video rounded-md bg-neutral-800"></div></div>`;
+  return `<div class="w-[160px] shrink-0 animate-pulse sm:w-[200px] md:w-[240px]"><div class="aspect-video rounded-md bg-neutral-800"></div></div>`;
 }
 
 // ---------- Baris ----------
 function rowShell(key, title) {
   return `
-    <section data-row="${esc(key)}" class="group/row relative mb-10">
-      <h2 class="mb-3 px-8 text-xl font-bold md:text-2xl">${esc(title)}</h2>
+    <section data-row="${esc(key)}" class="group/row relative mb-8 md:mb-10">
+      <h2 class="mb-3 px-4 text-lg font-bold sm:text-xl md:px-8 md:text-2xl">${esc(title)}</h2>
 
       <button type="button" data-scroll="-1"
         class="absolute left-0 top-1/2 z-20 hidden h-24 w-8 -translate-y-1/2 items-center justify-center rounded-r-md bg-black/60 text-2xl opacity-0 transition group-hover/row:opacity-100 md:flex">&#8249;</button>
 
       <div data-track
-        class="flex snap-x snap-mandatory gap-2 overflow-x-auto scroll-smooth px-8 pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        class="flex snap-x snap-mandatory gap-2 overflow-x-auto scroll-smooth px-4 pb-2 md:px-8 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         ${skeletonCard().repeat(6)}
       </div>
 
@@ -362,7 +362,7 @@ function paintLogo(key, item) {
   if (!slot || !item.logo) return;
 
   slot.innerHTML = `<img src="${esc(item.logo)}" alt="${esc(item.title)}"
-    class="max-h-16 w-auto max-w-[85%] object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]" />`;
+    class="max-h-10 w-auto max-w-[85%] object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)] sm:max-h-14 md:max-h-16" />`;
 }
 
 async function loadLogos(key, start) {
@@ -451,7 +451,7 @@ function openDetail(item) {
   firstEpisode = null;
 
   modal.className =
-    "fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80 p-4 py-10";
+    "fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80 p-2 py-4 sm:p-4 sm:py-10";
   modal.innerHTML = `
     <div class="w-full max-w-4xl overflow-hidden rounded-lg bg-[#181818] shadow-2xl">
 
@@ -466,27 +466,27 @@ function openDetail(item) {
         <button type="button" data-close
           class="absolute right-4 top-4 z-30 flex h-10 w-10 items-center justify-center rounded-full bg-[#181818] text-xl hover:bg-black">&times;</button>
 
-        <div class="absolute inset-x-0 bottom-0 z-20 p-6 md:p-10">
-          <h3 data-title class="max-w-[70%] text-3xl font-black tracking-tight drop-shadow-lg md:text-5xl">${esc(item.title)}</h3>
+        <div class="absolute inset-x-0 bottom-0 z-20 p-4 sm:p-6 md:p-10">
+          <h3 data-title class="max-w-[80%] text-xl font-black tracking-tight drop-shadow-lg sm:text-3xl md:max-w-[70%] md:text-5xl">${esc(item.title)}</h3>
 
-          <div class="mt-5 flex items-center gap-3">
+          <div class="mt-3 flex items-center gap-2 sm:mt-5 sm:gap-3">
             <button type="button" data-play disabled
-              class="flex items-center gap-2 rounded bg-white px-7 py-2 text-lg font-bold text-black hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-40">
-              <span class="text-xl leading-none">&#9654;</span> Play
+              class="flex items-center gap-2 rounded bg-white px-4 py-1.5 text-sm font-bold text-black hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-40 sm:px-7 sm:py-2 sm:text-lg">
+              <span class="leading-none sm:text-xl">&#9654;</span> Play
             </button>
 
             <button type="button" data-save title="My List"
-              class="flex h-10 w-10 items-center justify-center rounded-full border-2 border-neutral-400 bg-black/40 text-xl leading-none hover:border-white"></button>
+              class="flex h-9 w-9 items-center justify-center rounded-full border-2 border-neutral-400 bg-black/40 text-lg leading-none hover:border-white sm:h-10 sm:w-10 sm:text-xl"></button>
 
             <button type="button" data-like title="Suka"
-              class="flex h-10 w-10 items-center justify-center rounded-full border-2 border-neutral-400 bg-black/40 hover:border-white">&#128077;</button>
+              class="flex h-9 w-9 items-center justify-center rounded-full border-2 border-neutral-400 bg-black/40 text-sm hover:border-white sm:h-10 sm:w-10 sm:text-base">&#128077;</button>
           </div>
         </div>
       </div>
 
-      <div class="grid gap-8 p-6 md:grid-cols-[2fr_1fr] md:p-10 md:pt-6">
+      <div class="grid gap-6 p-4 sm:p-6 md:grid-cols-[2fr_1fr] md:gap-8 md:p-10 md:pt-6">
         <div class="space-y-4">
-          <div class="flex flex-wrap items-center gap-3 text-sm">
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
             <span class="text-neutral-300">${esc(item.year)}</span>
             <span class="text-neutral-300">${item.type === "SHOW" ? "Series" : "Movie"}</span>
             <span data-duration class="text-neutral-300">${duration(item)}</span>
@@ -526,11 +526,11 @@ function openDetail(item) {
 
       ${
         item.type === "SHOW"
-          ? `<div data-episodes class="border-t border-neutral-800 p-6 md:p-10 md:pt-6">
+          ? `<div data-episodes class="border-t border-neutral-800 p-4 sm:p-6 md:p-10 md:pt-6">
                <div class="mb-4 flex items-center justify-between gap-4">
-                 <h4 class="text-xl font-bold">Episode</h4>
+                 <h4 class="text-xl font-bold sm:text-2xl">Episode</h4>
                  <select data-season
-                   class="hidden rounded border border-neutral-600 bg-[#181818] px-3 py-2 text-sm outline-none"></select>
+                   class="hidden cursor-pointer rounded border border-neutral-500 bg-[#242424] px-4 py-2 text-base font-semibold outline-none hover:border-white sm:px-5 sm:py-2.5 sm:text-lg"></select>
                </div>
                <div data-eplist class="space-y-1 text-sm text-neutral-500">Memuat daftar episode...</div>
              </div>`
@@ -660,15 +660,15 @@ function episodeRow(item, ep) {
 
   return `
     <button type="button" data-ep="${ep.season}-${ep.number}"
-      class="flex w-full items-center gap-4 rounded p-3 text-left hover:bg-neutral-800">
-      <span class="w-6 shrink-0 text-center text-lg text-neutral-400">${ep.number}</span>
-      <span class="h-16 w-28 shrink-0 overflow-hidden rounded bg-neutral-800">${thumb}</span>
+      class="flex w-full items-center gap-3 rounded p-2 text-left hover:bg-neutral-800 sm:gap-4 sm:p-3">
+      <span class="w-5 shrink-0 text-center text-base text-neutral-400 sm:w-6 sm:text-lg">${ep.number}</span>
+      <span class="h-12 w-20 shrink-0 overflow-hidden rounded bg-neutral-800 sm:h-16 sm:w-28">${thumb}</span>
       <span class="min-w-0 flex-1">
         <span class="flex items-baseline justify-between gap-3">
-          <span class="truncate font-semibold">${esc(ep.name)}</span>
+          <span class="truncate text-sm font-semibold sm:text-base">${esc(ep.name)}</span>
           ${ep.runtime ? `<span class="shrink-0 text-xs text-neutral-400">${ep.runtime}m</span>` : ""}
         </span>
-        <span class="mt-1 line-clamp-2 block text-xs leading-relaxed text-neutral-400">${esc(ep.summary)}</span>
+        <span class="mt-1 line-clamp-2 hidden text-xs leading-relaxed text-neutral-400 sm:block">${esc(ep.summary)}</span>
       </span>
     </button>
   `;
@@ -691,7 +691,12 @@ async function loadEpisodes(item, modal) {
   meta.textContent = `${item.seasonCount} Season · ${item.episodeCount} Episode`;
 
   picker.innerHTML = seasons
-    .map((s) => `<option value="${s.number}">Season ${s.number}</option>`)
+    .map(
+      (s) =>
+        `<option value="${s.number}">Season ${s.number}${
+          s.count ? ` (${s.count} episode)` : ""
+        }</option>`
+    )
     .join("");
   picker.classList.remove("hidden");
 
@@ -739,6 +744,10 @@ let barTimer = null;
 let toastTimer = null;
 let toggleLock = null; // diisi saat player terbuka, dipakai shortcut keyboard
 
+// Di HP tidak ada papan ketik, jadi shortcut "L" tidak berguna -- kuncinya
+// harus berupa tombol yang selalu kelihatan.
+const isTouch = window.matchMedia("(pointer: coarse)").matches;
+
 function requestFullscreen(el) {
   const fn = el.requestFullscreen || el.webkitRequestFullscreen;
   try {
@@ -770,27 +779,27 @@ function openPlayer(item, ep = null) {
       title="${esc(item.title)}"
       class="absolute inset-0 h-full w-full border-0"
       allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
-      allowfullscreen
+      allowfullscreen; unmuted; unmuted; web-share
       referrerpolicy="origin"
     ></iframe>
     
 
     <div data-shield class="absolute inset-0 z-10"></div>
 
-    <div data-bar class="absolute inset-x-0 top-0 z-20 flex items-center gap-4 bg-gradient-to-b from-black/90 via-black/50 to-transparent p-4 transition-opacity duration-300">
+    <div data-bar class="absolute inset-x-0 top-0 z-20 flex items-center gap-2 bg-gradient-to-b from-black/90 via-black/50 to-transparent p-3 transition-opacity duration-300 sm:gap-4 sm:p-4">
       <button type="button" data-back
-        class="flex shrink-0 items-center gap-2 rounded-full bg-black/70 px-4 py-2 text-sm font-semibold hover:bg-black">
-        &#8592; Kembali
+        class="flex shrink-0 items-center gap-2 rounded-full bg-black/70 px-3 py-2 text-sm font-semibold hover:bg-black sm:px-4">
+        &#8592; <span class="hidden sm:inline">Kembali</span>
       </button>
       <div class="min-w-0">
-        <p class="truncate font-semibold">${esc(item.title)}</p>
-        <p class="truncate text-xs text-neutral-400">
+        <p class="truncate text-sm font-semibold sm:text-base">${esc(item.title)}</p>
+        <p class="truncate text-[11px] text-neutral-400 sm:text-xs">
           ${ep ? `S${ep.season}:E${ep.number} &middot; ` : ""}${esc(item.year)} &middot; ${esc(item.imdbId)}
         </p>
       </div>
       <button type="button" data-relock
-        class="ml-auto hidden shrink-0 rounded-full bg-black/70 px-4 py-2 text-xs font-semibold hover:bg-black">
-        &#128274; Kunci lagi
+        class="ml-auto hidden shrink-0 rounded-full bg-black/70 px-3 py-2 text-xs font-semibold hover:bg-black sm:px-4">
+        &#128274; <span class="hidden sm:inline">Kunci lagi</span>
       </button>
     </div>
 
@@ -813,15 +822,23 @@ function openPlayer(item, ep = null) {
   const applyLock = (announce = false) => {
     shield.classList.toggle("pointer-events-none", !screenLocked);
 
-    // saat terkunci tidak ada tombol kunci; baru muncul setelah dibuka, karena
-    // shortcut "L" tidak terbaca kalau fokus sudah pindah ke dalam iframe
-    relockBtn.classList.toggle("hidden", screenLocked);
+    // Di HP tombolnya selalu ada karena tidak ada cara lain membuka kunci.
+    // Di desktop tetap tersembunyi saat terkunci, karena ada shortcut "L" --
+    // tombolnya baru muncul setelah dibuka, sebab "L" tidak terbaca lagi
+    // kalau fokus sudah pindah ke dalam iframe.
+    relockBtn.classList.toggle("hidden", screenLocked && !isTouch);
+    if (isTouch) {
+      relockBtn.innerHTML = screenLocked
+        ? `&#128274; <span class="hidden sm:inline">Buka kunci</span>`
+        : `&#128275; <span class="hidden sm:inline">Kunci lagi</span>`;
+    }
 
     if (announce) {
+      const caraMengunci = isTouch ? "pakai tombol di atas" : "tekan L";
       showToast(
         screenLocked
           ? "&#128274; Layar dikunci"
-          : "&#128275; Layar dibuka &middot; tekan L untuk mengunci"
+          : `&#128275; Layar dibuka &middot; ${caraMengunci} untuk mengunci`
       );
     }
 
@@ -838,7 +855,7 @@ function openPlayer(item, ep = null) {
 
   el.querySelector("[data-back]").onclick = () => closePlayer();
 
-  // tidak ada tombolnya di layar -> hanya lewat shortcut "L"
+  // di desktop dipanggil shortcut "L", di HP oleh tombol di bar
   toggleLock = () => {
     screenLocked = !screenLocked;
     applyLock(true);
