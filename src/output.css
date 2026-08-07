@@ -565,6 +565,9 @@
   .border-neutral-800 {
     border-color: var(--color-neutral-800);
   }
+  .border-red-600 {
+    border-color: var(--color-red-600);
+  }
   .border-slate-800 {
     border-color: var(--color-slate-800);
   }

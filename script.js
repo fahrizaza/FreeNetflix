@@ -7,26 +7,54 @@ const REGION = "ID"; // dipakai untuk daftar layanan streaming
 const PLAYER = "https://streamimdb.ru/embed";
 const STORAGE_KEY = "netflix:saved";
 
-// TMDB punya endpoint khusus untuk tiap kategori, jadi barisnya berisi data
-// asli (trending, populer, hasil filter) -- bukan hasil pencarian kata kunci.
+// Hanya judul yang benar-benar ada di layanan streaming Indonesia yang boleh
+// tampil di beranda. TMDB bisa menyaringnya langsung lewat watch_region, jadi
+// tidak perlu menembak detail satu per satu hanya untuk mengecek. Judul di luar
+// itu tetap bisa ditemukan lewat kotak pencarian.
+const ONLY_STREAMABLE =
+  `watch_region=${REGION}&with_watch_monetization_types=flatrate%7Cfree%7Cads%7Crent%7Cbuy`;
+
+// 6 bulan terakhir, dipakai baris "Trending Now"
+const SIX_MONTHS_AGO = new Date(Date.now() - 182 * 864e5).toISOString().slice(0, 10);
+
 const ROWS = [
-  { key: "next", title: "Your Next Watch", path: "/movie/popular", type: "MOVIE", top10: true },
-  { key: "trending", title: "Trending Now", path: "/trending/all/week" },
-  { key: "series", title: "Serial Populer", path: "/tv/popular", type: "SHOW" },
+  {
+    key: "next",
+    title: "Your Next Watch",
+    path: `/discover/movie?${ONLY_STREAMABLE}&include_adult=false&sort_by=popularity.desc`,
+    type: "MOVIE",
+    top10: true,
+  },
+  {
+    key: "trending",
+    title: "Trending Now",
+    path:
+      `/discover/movie?${ONLY_STREAMABLE}&include_adult=false` +
+      `&primary_release_date.gte=${SIX_MONTHS_AGO}&sort_by=popularity.desc`,
+    type: "MOVIE",
+  },
+  {
+    key: "series",
+    title: "Serial Populer",
+    path: `/discover/tv?${ONLY_STREAMABLE}&include_adult=false&sort_by=popularity.desc`,
+    type: "SHOW",
+  },
   {
     // vote_count.gte menyaring judul obskur/dewasa yang ikut terangkat
     // kalau hanya diurutkan berdasarkan popularitas
     key: "anime",
     title: "Anime",
     path:
-      "/discover/tv?with_genres=16&with_original_language=ja" +
+      `/discover/tv?${ONLY_STREAMABLE}&with_genres=16&with_original_language=ja` +
       "&include_adult=false&vote_count.gte=200&sort_by=popularity.desc",
     type: "SHOW",
   },
   {
     key: "local",
     title: "Film Indonesia",
-    path: "/discover/movie?with_original_language=id&include_adult=false&sort_by=popularity.desc",
+    path:
+      `/discover/movie?${ONLY_STREAMABLE}&with_original_language=id` +
+      "&include_adult=false&sort_by=popularity.desc",
     type: "MOVIE",
   },
 ];
@@ -327,9 +355,6 @@ function openDetail(item) {
   const modal = document.getElementById("modal");
   firstEpisode = null;
 
-  const badge = (text, extra = "") =>
-    `<span class="rounded border border-neutral-500 px-1.5 text-[11px] leading-5 text-neutral-300 ${extra}">${text}</span>`;
-
   modal.className =
     "fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80 p-4 py-10";
   modal.innerHTML = `
@@ -371,7 +396,8 @@ function openDetail(item) {
             <span class="text-neutral-300">${item.type === "SHOW" ? "Series" : "Movie"}</span>
             <span data-duration class="text-neutral-300">${duration(item)}</span>
             <span data-eps-meta class="text-neutral-300"></span>
-            ${badge("HD")}
+            <span data-quality title="Memuat info kualitas..."
+              class="rounded border border-neutral-500 px-1.5 text-[11px] leading-5 text-neutral-300">HD</span>
             ${item.rating ? `<span class="font-semibold text-green-500">${item.rating}% match</span>` : ""}
           </div>
 
@@ -479,10 +505,12 @@ async function loadDetail(item, modal) {
       : ""
   );
 
+  const streamable = item.providers.length > 0;
+
   set(
     "[data-providers]",
     `<span class="text-neutral-500">Tonton di: </span>` +
-      (item.providers.length
+      (streamable
         ? item.providers
             .slice(0, 8)
             .map(
@@ -493,6 +521,19 @@ async function loadDetail(item, modal) {
             .join(", ")
         : `<span class="text-neutral-500">belum tersedia di Indonesia.</span>`)
   );
+
+  // Judul tanpa platform resmi biasanya cuma beredar sebagai rekaman bioskop,
+  // jadi ditandai CAM supaya jelas kualitasnya sebelum ditonton.
+  const quality = modal.querySelector("[data-quality]");
+  if (quality) {
+    quality.textContent = streamable ? "HD" : "CAM";
+    quality.title = streamable
+      ? "Tersedia resmi di layanan streaming"
+      : "Belum ada di layanan streaming mana pun - kemungkinan besar hasil rekaman, kualitas dan suaranya buruk";
+    quality.className = streamable
+      ? "rounded border border-neutral-500 px-1.5 text-[11px] leading-5 text-neutral-300"
+      : "rounded border border-red-600 bg-red-600 px-1.5 text-[11px] font-bold leading-5 text-white";
+  }
 
   const playBtn = modal.querySelector("[data-play]");
   if (playerUrl(item)) {
