@@ -1,62 +1,115 @@
-// Di localhost tidak ada proxy, jadi API ditembak langsung. Saat sudah online,
-// lewat /api/justwatch yang di-proxy Netlify supaya lolos CORS (lihat netlify.toml).
-const isLocal = ["localhost", "127.0.0.1", ""].includes(location.hostname);
-const API = isLocal ? "https://imdb.iamidiotareyoutoo.com/justwatch" : "/api/justwatch";
+// TMDB dipakai karena mengirim header CORS "*", jadi bisa dipanggil langsung
+// dari browser di domain mana pun -- tidak perlu proxy seperti API sebelumnya.
+const TMDB_KEY = "e514a26ed1063ffba53ecce04eeb969d";
+const TMDB = "https://api.themoviedb.org/3";
+const IMG = "https://image.tmdb.org/t/p";
+const REGION = "ID"; // dipakai untuk daftar layanan streaming
 const PLAYER = "https://streamimdb.ru/embed";
-// JustWatch tidak mengembalikan jumlah season/episode, jadi daftar episode
-// diambil dari TVmaze -- gratis, tanpa API key, dan bisa dicari lewat imdbId.
-const TVMAZE = "https://api.tvmaze.com";
 const STORAGE_KEY = "netflix:saved";
 
-// Baris default. API ini hanya punya endpoint search,
-// jadi tiap baris diisi dari satu kata kunci pencarian.
+// TMDB punya endpoint khusus untuk tiap kategori, jadi barisnya berisi data
+// asli (trending, populer, hasil filter) -- bukan hasil pencarian kata kunci.
 const ROWS = [
-  { key: "next", title: "Your Next Watch", query: "spider-man", top10: true },
-  { key: "trending", title: "Trending Now", query: "avatar" },
-  { key: "series", title: "Serial Populer", query: "stranger things" },
-  { key: "anime", title: "Anime", query: "anime" },
-  { key: "local", title: "Film Indonesia", query: "pengabdi setan" },
+  { key: "next", title: "Your Next Watch", path: "/movie/popular", type: "MOVIE", top10: true },
+  { key: "trending", title: "Trending Now", path: "/trending/all/week" },
+  { key: "series", title: "Serial Populer", path: "/tv/popular", type: "SHOW" },
+  {
+    // vote_count.gte menyaring judul obskur/dewasa yang ikut terangkat
+    // kalau hanya diurutkan berdasarkan popularitas
+    key: "anime",
+    title: "Anime",
+    path:
+      "/discover/tv?with_genres=16&with_original_language=ja" +
+      "&include_adult=false&vote_count.gte=200&sort_by=popularity.desc",
+    type: "SHOW",
+  },
+  {
+    key: "local",
+    title: "Film Indonesia",
+    path: "/discover/movie?with_original_language=id&include_adult=false&sort_by=popularity.desc",
+    type: "MOVIE",
+  },
 ];
 
 // Semua judul yang pernah dimuat, dipakai saat kartu diklik.
 const catalog = new Map();
 
 // ---------- API ----------
-async function searchTitles(query) {
-  const res = await fetch(`${API}?q=${encodeURIComponent(query)}`);
+async function tmdb(path) {
+  const sep = path.includes("?") ? "&" : "?";
+  const res = await fetch(`${TMDB}${path}${sep}api_key=${TMDB_KEY}`);
   if (!res.ok) throw new Error(`Request gagal (${res.status})`);
+  return res.json();
+}
 
-  const json = await res.json();
-  if (!json.ok) throw new Error(json.description || "Pencarian gagal");
+// dipakai baris beranda maupun kotak pencarian
+async function fetchList(path, forcedType = "") {
+  const json = await tmdb(path);
 
-  const items = (json.description || []).map(normalize);
+  const items = (json.results || [])
+    .filter((raw) => (forcedType ? true : raw.media_type === "movie" || raw.media_type === "tv"))
+    .map((raw) => normalize(raw, forcedType));
+
   items.forEach((item) => catalog.set(item.id, item));
   return items;
 }
 
-function normalize(raw) {
-  const providers = [];
-  (raw.offers || []).forEach((offer) => {
-    if (!providers.some((p) => p.name === offer.name)) {
-      providers.push({ name: offer.name, url: offer.url, type: offer.type });
-    }
-  });
+function normalize(raw, forcedType = "") {
+  const type = forcedType || (raw.media_type === "tv" ? "SHOW" : "MOVIE");
+  const date = raw.release_date || raw.first_air_date || "";
 
   return {
-    id: raw.id, // <- id JustWatch, ini yang disimpan
-    imdbId: raw.imdbId || "",
-    tmdbId: raw.tmdbId || "",
-    title: raw.title || "Tanpa judul",
-    year: raw.year || "",
-    runtime: raw.runtime || 0,
-    type: raw.type || "MOVIE",
-    url: raw.url || "#",
-    poster: (raw.photo_url || [])[0] || "",
-    backdrop: (raw.backdrops || [])[0] || (raw.photo_url || [])[0] || "",
-    rating: raw.jwRating ? Math.round(raw.jwRating * 100) : null,
-    tomato: raw.tomatoMeter,
-    providers,
+    id: `${type === "SHOW" ? "tv" : "movie"}-${raw.id}`,
+    tmdbId: raw.id,
+    imdbId: "", // baru diambil saat modal dibuka (butuh satu request lagi)
+    title: raw.title || raw.name || "Tanpa judul",
+    year: date.slice(0, 4),
+    runtime: 0, // tidak ada di hasil pencarian, diisi dari detail
+    type,
+    overview: raw.overview || "",
+    poster: raw.poster_path ? `${IMG}/w500${raw.poster_path}` : "",
+    backdrop: raw.backdrop_path ? `${IMG}/w780${raw.backdrop_path}` : "",
+    rating: raw.vote_average ? Math.round(raw.vote_average * 10) : null,
+    genres: [],
+    seasonCount: 0,
+    episodeCount: 0,
+    providers: [],
+    detailLoaded: false,
   };
+}
+
+// Satu request mengambil semua yang kurang: durasi, genre, imdb_id untuk
+// player, jumlah season, dan daftar layanan streaming.
+async function fetchDetail(item) {
+  if (item.detailLoaded) return item;
+
+  const kind = item.type === "SHOW" ? "tv" : "movie";
+  const data = await tmdb(
+    `/${kind}/${item.tmdbId}?append_to_response=external_ids,watch/providers`
+  );
+
+  item.imdbId = data.external_ids?.imdb_id || "";
+  item.overview = data.overview || item.overview;
+  item.genres = (data.genres || []).map((g) => g.name);
+  item.runtime = data.runtime || (data.episode_run_time || [])[0] || 0;
+
+  if (item.type === "SHOW") {
+    item.seasonCount = data.number_of_seasons || 0;
+    item.episodeCount = data.number_of_episodes || 0;
+    item.seasons = (data.seasons || [])
+      .filter((s) => s.season_number > 0 && s.episode_count > 0)
+      .map((s) => ({ number: s.season_number, count: s.episode_count }));
+  }
+
+  const region = data["watch/providers"]?.results?.[REGION] || {};
+  const seen = new Set();
+  item.providers = [...(region.flatrate || []), ...(region.rent || []), ...(region.buy || [])]
+    .filter((p) => !seen.has(p.provider_name) && seen.add(p.provider_name))
+    .map((p) => ({ name: p.provider_name, url: region.link || "#" }));
+
+  item.detailLoaded = true;
+  catalog.set(item.id, item);
+  return item;
 }
 
 // ---------- Penyimpanan id ----------
@@ -143,43 +196,28 @@ function playerUrl(item, ep = null) {
   return `${PLAYER}/movie/${id}?${query}`;
 }
 
-// ---------- Daftar episode (TVmaze) ----------
+// ---------- Daftar episode ----------
+// Diambil per season supaya serial panjang tidak menarik ratusan episode
+// sekaligus. Hasilnya di-cache per "tmdbId-season".
 const episodeCache = new Map();
 
-// summary dari TVmaze berisi HTML; DOMParser membuat dokumen inert,
-// jadi tidak ada script/gambar yang ikut jalan saat tag dibuang
-function stripHtml(html) {
-  if (!html) return "";
-  const doc = new DOMParser().parseFromString(html, "text/html");
-  return (doc.body.textContent || "").trim();
-}
+async function fetchSeason(tmdbId, season) {
+  const key = `${tmdbId}-${season}`;
+  if (episodeCache.has(key)) return episodeCache.get(key);
 
-async function fetchEpisodes(imdbId) {
-  if (episodeCache.has(imdbId)) return episodeCache.get(imdbId);
+  const data = await tmdb(`/tv/${tmdbId}/season/${season}`);
 
-  const res = await fetch(`${TVMAZE}/lookup/shows?imdb=${encodeURIComponent(imdbId)}`);
-  if (!res.ok) throw new Error("Serial ini tidak ada di TVmaze");
-  const show = await res.json();
+  const episodes = (data.episodes || []).map((e) => ({
+    season: e.season_number,
+    number: e.episode_number,
+    name: e.name || `Episode ${e.episode_number}`,
+    runtime: e.runtime || 0,
+    image: e.still_path ? `${IMG}/w300${e.still_path}` : "",
+    summary: e.overview || "",
+  }));
 
-  const [seasons, episodes] = await Promise.all([
-    fetch(`${TVMAZE}/shows/${show.id}/seasons`).then((r) => r.json()),
-    fetch(`${TVMAZE}/shows/${show.id}/episodes`).then((r) => r.json()),
-  ]);
-
-  const data = {
-    seasons: seasons.map((s) => ({ number: s.number, count: s.episodeOrder || 0 })),
-    episodes: episodes.map((e) => ({
-      season: e.season,
-      number: e.number,
-      name: e.name || `Episode ${e.number}`,
-      runtime: e.runtime || 0,
-      image: e.image?.medium || "",
-      summary: stripHtml(e.summary),
-    })),
-  };
-
-  episodeCache.set(imdbId, data);
-  return data;
+  episodeCache.set(key, episodes);
+  return episodes;
 }
 
 // ---------- Kartu ----------
@@ -287,19 +325,7 @@ function stageImage(item) {
 
 function openDetail(item) {
   const modal = document.getElementById("modal");
-  const player = playerUrl(item);
   firstEpisode = null;
-
-  const providers = item.providers.length
-    ? item.providers
-        .slice(0, 8)
-        .map(
-          (p) =>
-            `<a href="${esc(p.url)}" target="_blank" rel="noopener"
-               class="text-white underline-offset-2 hover:underline">${esc(p.name)}</a>`
-        )
-        .join(", ")
-    : `<span class="text-neutral-500">Belum tersedia di layanan streaming.</span>`;
 
   const badge = (text, extra = "") =>
     `<span class="rounded border border-neutral-500 px-1.5 text-[11px] leading-5 text-neutral-300 ${extra}">${text}</span>`;
@@ -324,7 +350,7 @@ function openDetail(item) {
           <h3 class="max-w-[70%] text-3xl font-black tracking-tight drop-shadow-lg md:text-5xl">${esc(item.title)}</h3>
 
           <div class="mt-5 flex items-center gap-3">
-            <button type="button" data-play ${player ? "" : "disabled"}
+            <button type="button" data-play disabled
               class="flex items-center gap-2 rounded bg-white px-7 py-2 text-lg font-bold text-black hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-40">
               <span class="text-xl leading-none">&#9654;</span> Play
             </button>
@@ -343,14 +369,14 @@ function openDetail(item) {
           <div class="flex flex-wrap items-center gap-3 text-sm">
             <span class="text-neutral-300">${esc(item.year)}</span>
             <span class="text-neutral-300">${item.type === "SHOW" ? "Series" : "Movie"}</span>
-            ${duration(item) ? `<span class="text-neutral-300">${duration(item)}</span>` : ""}
-            ${item.type === "SHOW" ? `<span data-eps-meta class="text-neutral-300"></span>` : ""}
+            <span data-duration class="text-neutral-300">${duration(item)}</span>
+            <span data-eps-meta class="text-neutral-300"></span>
             ${badge("HD")}
             ${item.rating ? `<span class="font-semibold text-green-500">${item.rating}% match</span>` : ""}
           </div>
 
           ${
-            item.rating >= 90 || item.tomato >= 85
+            item.rating >= 80
               ? `<p class="flex items-center gap-2 font-semibold">
                    <span class="flex h-6 w-6 items-center justify-center rounded bg-red-600 text-xs">&#128077;</span>
                    Most Liked
@@ -358,41 +384,27 @@ function openDetail(item) {
               : ""
           }
 
-          <p class="text-sm leading-relaxed text-neutral-200">
-            ${esc(item.title)}${item.year ? ` (${esc(item.year)})` : ""} &mdash;
-            ${item.type === "SHOW" ? "serial" : "film"} dengan
-            ${item.rating ? `skor penonton ${item.rating}%` : "skor penonton belum tersedia"}${
-              item.tomato ? ` dan Rotten Tomatoes ${item.tomato}%` : ""
-            }.
+          <p data-overview class="text-sm leading-relaxed text-neutral-200">
+            ${esc(item.overview) || "Sinopsis belum tersedia."}
           </p>
         </div>
 
         <div class="space-y-4 text-sm">
-          <p class="leading-relaxed">
-            <span class="text-neutral-500">Tonton di: </span>${providers}
+          <p data-genres class="leading-relaxed"></p>
+          <p data-providers class="leading-relaxed">
+            <span class="text-neutral-500">Tonton di: </span>
+            <span class="text-neutral-500">memuat...</span>
           </p>
-          ${
-            item.tomato
-              ? `<p><span class="text-neutral-500">Rotten Tomatoes: </span>${item.tomato}%${
-                  item.tomato >= 75 ? " (Fresh)" : ""
-                }</p>`
-              : ""
-          }
           <p class="leading-relaxed">
             <span class="text-neutral-500">ID: </span>
             <span class="font-mono text-xs">${esc(item.id)}</span> &middot;
-            <span class="font-mono text-xs">${esc(item.imdbId || "-")}</span>
+            <span data-imdb class="font-mono text-xs">-</span>
           </p>
-          ${
-            player
-              ? ""
-              : `<p class="text-xs text-neutral-500">ID IMDb tidak tersedia, video tidak bisa diputar.</p>`
-          }
         </div>
       </div>
 
       ${
-        item.type === "SHOW" && player
+        item.type === "SHOW"
           ? `<div data-episodes class="border-t border-neutral-800 p-6 md:p-10 md:pt-6">
                <div class="mb-4 flex items-center justify-between gap-4">
                  <h4 class="text-xl font-bold">Episode</h4>
@@ -430,9 +442,67 @@ function openDetail(item) {
     likeBtn.classList.toggle("bg-white/20");
   };
 
-  if (player) playBtn.onclick = () => openPlayer(item, firstEpisode);
+  // detail (durasi, genre, imdb_id, provider) butuh satu request lagi, jadi
+  // modal ditampilkan dulu lalu diisi menyusul
+  loadDetail(item, modal);
+}
 
-  if (item.type === "SHOW" && player) loadEpisodes(item, modal);
+async function loadDetail(item, modal) {
+  const alive = () => modal.innerHTML !== ""; // modal bisa keburu ditutup
+
+  try {
+    await fetchDetail(item);
+  } catch (err) {
+    console.error("Gagal memuat detail", err);
+    if (alive()) {
+      modal.querySelector("[data-providers]").innerHTML =
+        `<span class="text-neutral-500">Detail gagal dimuat.</span>`;
+    }
+    return;
+  }
+
+  if (!alive()) return;
+
+  const set = (sel, html) => {
+    const el = modal.querySelector(sel);
+    if (el) el.innerHTML = html;
+  };
+
+  set("[data-duration]", esc(duration(item)));
+  set("[data-overview]", esc(item.overview) || "Sinopsis belum tersedia.");
+  set("[data-imdb]", esc(item.imdbId || "-"));
+
+  set(
+    "[data-genres]",
+    item.genres.length
+      ? `<span class="text-neutral-500">Genre: </span>${esc(item.genres.join(", "))}`
+      : ""
+  );
+
+  set(
+    "[data-providers]",
+    `<span class="text-neutral-500">Tonton di: </span>` +
+      (item.providers.length
+        ? item.providers
+            .slice(0, 8)
+            .map(
+              (p) =>
+                `<a href="${esc(p.url)}" target="_blank" rel="noopener"
+                   class="text-white underline-offset-2 hover:underline">${esc(p.name)}</a>`
+            )
+            .join(", ")
+        : `<span class="text-neutral-500">belum tersedia di Indonesia.</span>`)
+  );
+
+  const playBtn = modal.querySelector("[data-play]");
+  if (playerUrl(item)) {
+    playBtn.disabled = false;
+    playBtn.onclick = () => openPlayer(item, firstEpisode);
+  } else {
+    set("[data-imdb]", "tidak ada ID IMDb");
+  }
+
+  if (item.type === "SHOW") loadEpisodes(item, modal);
 }
 
 // episode pertama dipakai tombol Play setelah daftar episode selesai dimuat
@@ -461,37 +531,39 @@ function episodeRow(item, ep) {
 
 async function loadEpisodes(item, modal) {
   const box = modal.querySelector("[data-episodes]");
+  if (!box) return;
+
   const list = box.querySelector("[data-eplist]");
   const picker = box.querySelector("[data-season]");
   const meta = modal.querySelector("[data-eps-meta]");
+  const seasons = item.seasons || [];
 
-  let data;
-  try {
-    data = await fetchEpisodes(item.imdbId);
-  } catch {
-    list.textContent = "Daftar episode tidak tersedia untuk serial ini.";
-    return;
-  }
-
-  if (modal.innerHTML === "") return; // modal keburu ditutup
-
-  const seasons = data.seasons.filter((s) => data.episodes.some((e) => e.season === s.number));
   if (!seasons.length) {
     list.textContent = "Daftar episode tidak tersedia untuk serial ini.";
     return;
   }
 
-  if (meta) {
-    meta.textContent = `${seasons.length} Season · ${data.episodes.length} Episode`;
-  }
+  meta.textContent = `${item.seasonCount} Season · ${item.episodeCount} Episode`;
 
   picker.innerHTML = seasons
     .map((s) => `<option value="${s.number}">Season ${s.number}</option>`)
     .join("");
   picker.classList.remove("hidden");
 
-  const paint = (season) => {
-    const eps = data.episodes.filter((e) => e.season === Number(season));
+  const paint = async (season) => {
+    list.className = "space-y-1 text-sm text-neutral-500";
+    list.textContent = "Memuat...";
+
+    let eps;
+    try {
+      eps = await fetchSeason(item.tmdbId, Number(season));
+    } catch {
+      list.textContent = "Episode season ini gagal dimuat.";
+      return;
+    }
+
+    if (modal.innerHTML === "") return;
+
     list.className = "space-y-1";
     list.innerHTML = eps.map((ep) => episodeRow(item, ep)).join("");
 
@@ -499,13 +571,13 @@ async function loadEpisodes(item, modal) {
       const [s, n] = btn.dataset.ep.split("-").map(Number);
       btn.onclick = () => openPlayer(item, { season: s, number: n });
     });
+
+    // tombol Play utama mengikuti episode pertama season yang sedang dibuka
+    if (eps.length) firstEpisode = { season: eps[0].season, number: eps[0].number };
   };
 
   picker.onchange = () => paint(picker.value);
   paint(seasons[0].number);
-
-  const first = data.episodes.find((e) => e.season === seasons[0].number);
-  if (first) firstEpisode = { season: first.season, number: first.number };
 }
 
 function closeDetail() {
@@ -733,7 +805,7 @@ document.getElementById("search-form").addEventListener("submit", async (e) => {
   rows.scrollIntoView({ behavior: "smooth" });
 
   try {
-    fillRow("search", await searchTitles(query));
+    fillRow("search", await fetchList(`/search/multi?query=${encodeURIComponent(query)}`));
   } catch (err) {
     fillRow("search", []);
     console.error(err);
@@ -772,7 +844,7 @@ async function runQueue() {
     attempts.set(row.key, attempt);
 
     try {
-      const items = await searchTitles(row.query);
+      const items = await fetchList(row.path, row.type);
       fillRow(row.key, items, { top10: row.top10 });
       if (row.key === "next") fillHero(items[0]);
       renderSavedRow(); // lengkapi My List dengan data dari catalog
