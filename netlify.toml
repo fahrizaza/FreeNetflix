@@ -1,0 +1,11 @@
+# API JustWatch menolak Origin dari domain Netlify (CORS), jadi request-nya
+# tidak dikirim browser langsung ke sana, tapi lewat domain sendiri.
+# status = 200 membuat Netlify mem-proxy, bukan me-redirect: browser melihatnya
+# sebagai request satu domain sehingga aturan CORS tidak berlaku.
+# Query string (?q=...) diteruskan otomatis.
+
+[[redirects]]
+  from = "/api/justwatch"
+  to = "https://imdb.iamidiotareyoutoo.com/justwatch"
+  status = 200
+  force = true

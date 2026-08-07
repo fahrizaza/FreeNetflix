@@ -1,4 +1,7 @@
-const API = "https://imdb.iamidiotareyoutoo.com/justwatch";
+// Di localhost tidak ada proxy, jadi API ditembak langsung. Saat sudah online,
+// lewat /api/justwatch yang di-proxy Netlify supaya lolos CORS (lihat netlify.toml).
+const isLocal = ["localhost", "127.0.0.1", ""].includes(location.hostname);
+const API = isLocal ? "https://imdb.iamidiotareyoutoo.com/justwatch" : "/api/justwatch";
 const PLAYER = "https://streamimdb.ru/embed";
 // JustWatch tidak mengembalikan jumlah season/episode, jadi daftar episode
 // diambil dari TVmaze -- gratis, tanpa API key, dan bisa dicari lewat imdbId.
@@ -21,18 +24,10 @@ const catalog = new Map();
 // ---------- API ----------
 async function searchTitles(query) {
   const res = await fetch(`${API}?q=${encodeURIComponent(query)}`);
-
-  // 5xx = server API yang bermasalah, bukan kesalahan di sisi kita
-  if (!res.ok) {
-    throw new Error(
-      res.status >= 500
-        ? `Server API sedang bermasalah (HTTP ${res.status})`
-        : `Permintaan ditolak (HTTP ${res.status})`
-    );
-  }
+  if (!res.ok) throw new Error(`Request gagal (${res.status})`);
 
   const json = await res.json();
-  if (!json.ok) throw new Error("Pencarian gagal diproses server");
+  if (!json.ok) throw new Error(json.description || "Pencarian gagal");
 
   const items = (json.description || []).map(normalize);
   items.forEach((item) => catalog.set(item.id, item));
@@ -249,32 +244,13 @@ function fillRow(key, items, opts = {}) {
   if (!track) return;
 
   if (!items.length) {
-    track.innerHTML = `<p class="py-8 text-sm text-neutral-500">Tidak ada hasil untuk kata kunci ini.</p>`;
+    track.innerHTML = `<p class="px-0 py-8 text-sm text-neutral-500">Tidak ada hasil.</p>`;
     return;
   }
 
   track.innerHTML = items
     .map((item, i) => cardTemplate(item, { top10: opts.top10 && i < 3 }))
     .join("");
-}
-
-// dibedakan dari "tidak ada hasil": ini API-nya yang gagal dihubungi
-function rowError(key, message, retryKey = "") {
-  const track = document.querySelector(`[data-row="${key}"] [data-track]`);
-  if (!track) return;
-
-  track.innerHTML = `
-    <div class="py-6">
-      <p class="text-sm text-neutral-300">${esc(message)}</p>
-      <p class="mt-1 text-xs text-neutral-500">Sumber datanya sedang tidak bisa dihubungi, bukan masalah di halaman ini.</p>
-      ${
-        retryKey
-          ? `<button type="button" data-retry="${esc(retryKey)}"
-               class="mt-3 rounded bg-neutral-800 px-3 py-1.5 text-xs font-semibold hover:bg-neutral-700">Coba lagi</button>`
-          : ""
-      }
-    </div>
-  `;
 }
 
 // ---------- Baris "My List" (dari id yang disimpan) ----------
@@ -724,16 +700,6 @@ document.addEventListener("click", (e) => {
     return;
   }
 
-  const retry = e.target.closest("[data-retry]");
-  if (retry) {
-    const row = ROWS.find((r) => r.key === retry.dataset.retry);
-    if (row) {
-      retry.closest("[data-track]").innerHTML = skeletonCard().repeat(6);
-      loadRow(row);
-    }
-    return;
-  }
-
   const card = e.target.closest("[data-id]");
   if (!card) return;
 
@@ -769,20 +735,54 @@ document.getElementById("search-form").addEventListener("submit", async (e) => {
   try {
     fillRow("search", await searchTitles(query));
   } catch (err) {
-    rowError("search", err.message);
+    fillRow("search", []);
     console.error(err);
   }
 });
 
 // ---------- Init ----------
-async function loadRow(row) {
-  try {
-    const items = await searchTitles(row.query);
-    fillRow(row.key, items, { top10: row.top10 });
-    if (row.key === "next") fillHero(items[0]);
-  } catch (err) {
-    rowError(row.key, err.message, row.key);
-    console.error(`Gagal memuat baris "${row.title}"`, err);
+const QUEUE_GAP_MS = 200; // jeda antar-fetch di dalam antrian
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// tab yang tidak terlihat tidak perlu ikut menembak API
+function whenVisible() {
+  if (!document.hidden) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    const onChange = () => {
+      if (document.hidden) return;
+      document.removeEventListener("visibilitychange", onChange);
+      resolve();
+    };
+    document.addEventListener("visibilitychange", onChange);
+  });
+}
+
+// Antrian berputar: satu fetch dalam satu waktu, urut sesuai ROWS. Baris yang
+// gagal dikembalikan ke belakang antrian, jadi baris di belakangnya tidak ikut
+// tertahan dan yang gagal tetap dicoba lagi sampai berhasil.
+async function runQueue() {
+  const queue = [...ROWS];
+  const attempts = new Map();
+
+  while (queue.length) {
+    const row = queue.shift();
+    const attempt = (attempts.get(row.key) || 0) + 1;
+    attempts.set(row.key, attempt);
+
+    try {
+      const items = await searchTitles(row.query);
+      fillRow(row.key, items, { top10: row.top10 });
+      if (row.key === "next") fillHero(items[0]);
+      renderSavedRow(); // lengkapi My List dengan data dari catalog
+    } catch (err) {
+      console.error(`Gagal memuat baris "${row.title}" (percobaan ${attempt})`, err);
+      queue.push(row); // antre lagi di belakang
+    }
+
+    await wait(QUEUE_GAP_MS);
+    await whenVisible();
   }
 }
 
@@ -791,9 +791,7 @@ async function init() {
   rows.innerHTML = ROWS.map((r) => rowShell(r.key, r.title)).join("");
   renderSavedRow();
 
-  await Promise.all(ROWS.map(loadRow));
-
-  renderSavedRow(); // isi ulang memakai data lengkap dari catalog
+  runQueue();
 }
 
 init();
