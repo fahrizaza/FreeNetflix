@@ -98,6 +98,8 @@ function normalize(raw, forcedType = "") {
     poster: raw.poster_path ? `${IMG}/w500${raw.poster_path}` : "",
     backdrop: raw.backdrop_path ? `${IMG}/w780${raw.backdrop_path}` : "",
     rating: raw.vote_average ? Math.round(raw.vote_average * 10) : null,
+    logo: "",
+    logoLoaded: false,
     genres: [],
     seasonCount: 0,
     episodeCount: 0,
@@ -133,6 +135,7 @@ async function fetchDetail(item) {
   );
 
   item.logo = pickLogo(data.images?.logos);
+  item.logoLoaded = true; // kartu di baris ikut memakai hasil ini
 
   item.imdbId = data.external_ids?.imdb_id || "";
   item.overview = data.overview || item.overview;
@@ -268,7 +271,12 @@ async function fetchSeason(tmdbId, season) {
 
 // ---------- Kartu ----------
 function cardTemplate(item, opts = {}) {
-  const { top10 = false } = opts;
+  const { top10 = false, logo = false, index = 0 } = opts;
+
+  // wadah logo dibiarkan kosong; diisi menyusul oleh loadLogos()
+  const logoSlot = logo
+    ? `<div data-logo class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-8"></div>`
+    : "";
 
   const top10Badge = top10
     ? `<div class="absolute left-1 top-0 z-10 rounded-sm bg-red-600 px-1 py-0.5 text-center text-[9px] font-bold leading-none">TOP<br />10</div>`
@@ -284,11 +292,13 @@ function cardTemplate(item, opts = {}) {
     : `<div class="flex h-full w-full items-center justify-center px-3 text-center text-sm text-neutral-500">${esc(item.title)}</div>`;
 
   return `
-    <button type="button" data-id="${esc(item.id)}" class="group/card w-[240px] shrink-0 snap-start text-left">
+    <button type="button" data-id="${esc(item.id)}" data-index="${index}"
+      class="group/card w-[240px] shrink-0 snap-start text-left">
       <div class="relative aspect-video overflow-hidden rounded-md bg-neutral-800 transition duration-300 group-hover/card:ring-2 group-hover/card:ring-white/60">
         ${top10Badge}
         ${netflix}
         ${image}
+        ${logoSlot}
         <div class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent opacity-0 transition duration-300 group-hover/card:opacity-100"></div>
         <div class="absolute inset-x-0 bottom-0 translate-y-2 p-3 opacity-0 transition duration-300 group-hover/card:translate-y-0 group-hover/card:opacity-100">
           <p class="line-clamp-1 text-sm font-semibold">${esc(item.title)}</p>
@@ -323,6 +333,69 @@ function rowShell(key, title) {
   `;
 }
 
+// ---------- Logo di kartu ----------
+// Logo tidak ikut di hasil /discover, jadi perlu satu request per judul.
+// Supaya tidak menembak 20 sekaligus, diambil 10 dulu; sisanya menyusul saat
+// kartu yang belum berlogo tergeser ke dalam layar.
+const LOGO_BATCH = 5;
+const rowItems = new Map();
+
+async function fetchLogo(item) {
+  if (item.logoLoaded) return item.logo;
+
+  const kind = item.type === "SHOW" ? "tv" : "movie";
+  try {
+    const data = await tmdb(`/${kind}/${item.tmdbId}/images?include_image_language=id,en,null`);
+    item.logo = pickLogo(data.logos);
+  } catch (err) {
+    item.logo = "";
+    console.error(`Logo "${item.title}" gagal dimuat`, err);
+  }
+
+  item.logoLoaded = true;
+  catalog.set(item.id, item);
+  return item.logo;
+}
+
+function paintLogo(key, item) {
+  const slot = document.querySelector(`[data-row="${key}"] [data-id="${item.id}"] [data-logo]`);
+  if (!slot || !item.logo) return;
+
+  slot.innerHTML = `<img src="${esc(item.logo)}" alt="${esc(item.title)}"
+    class="max-h-16 w-auto max-w-[85%] object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]" />`;
+}
+
+async function loadLogos(key, start) {
+  const items = rowItems.get(key) || [];
+  const batch = items.slice(start, start + LOGO_BATCH).filter((i) => !i.logoLoaded);
+  if (!batch.length) return;
+
+  await Promise.all(batch.map((item) => fetchLogo(item).then(() => paintLogo(key, item))));
+}
+
+function setupLogos(key, items) {
+  rowItems.set(key, items);
+  items.forEach((item) => item.logoLoaded && paintLogo(key, item)); // dari cache
+  loadLogos(key, 0);
+
+  const track = document.querySelector(`[data-row="${key}"] [data-track]`);
+  if (!track) return;
+
+  // root = track, jadi yang dipantau posisi kartu di dalam baris geser itu
+  const io = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        const index = Number(entry.target.dataset.index);
+        if (!items[index]?.logoLoaded) loadLogos(key, index);
+      }
+    },
+    { root: track, threshold: 0.1 }
+  );
+
+  track.querySelectorAll("[data-index]").forEach((card) => io.observe(card));
+}
+
 function fillRow(key, items, opts = {}) {
   const track = document.querySelector(`[data-row="${key}"] [data-track]`);
   if (!track) return;
@@ -333,8 +406,12 @@ function fillRow(key, items, opts = {}) {
   }
 
   track.innerHTML = items
-    .map((item, i) => cardTemplate(item, { top10: opts.top10 && i < 3 }))
+    .map((item, i) =>
+      cardTemplate(item, { top10: opts.top10 && i < 3, logo: opts.logo, index: i })
+    )
     .join("");
+
+  if (opts.logo) setupLogos(key, items);
 }
 
 // ---------- Baris "My List" (dari id yang disimpan) ----------
@@ -925,7 +1002,8 @@ async function runQueue() {
 
     try {
       const items = await fetchList(row.path, row.type);
-      fillRow(row.key, items, { top10: row.top10 });
+      // semua baris beranda pakai logo; My List dan hasil pencarian tidak
+      fillRow(row.key, items, { top10: row.top10, logo: true });
       if (row.key === "next") fillHero(items[0]);
       renderSavedRow(); // lengkapi My List dengan data dari catalog
     } catch (err) {
