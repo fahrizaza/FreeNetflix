@@ -40,6 +40,11 @@ const db = getFirestore(app);
 export const MAX_PROFILES = 4;
 export const MAX_HISTORY = 100;
 
+// Pemutar mengabarkan posisi tontonan tiap beberapa detik. Menulis semuanya ke
+// Firestore berarti ratusan tulisan per film, jadi salinan memori diperbarui
+// seketika dan server menyusul paling cepat sekali per jeda ini.
+const PROGRESS_WRITE_MS = 15000;
+
 const ACTIVE_PROFILE_KEY = "netflix:profile";
 // disimpan sebagai kelas Tailwind utuh supaya bisa dipakai apa adanya saat
 // menggambar; Tailwind hanya mengenali kelas yang tertulis literal
@@ -284,6 +289,10 @@ function rememberProfile(id) {
 }
 
 export function clearActiveProfile() {
+  // posisi yang masih mengantre ditulis selagi profilnya masih aktif; setelah
+  // ini historyRef() tidak punya tujuan lagi
+  flushProgress();
+
   activeProfile = null;
   myList.clear();
   history.clear();
@@ -297,6 +306,10 @@ export function clearActiveProfile() {
 export async function enterProfile(id) {
   const profile = profiles.find((p) => p.id === id);
   if (!profile) throw new Error("Profil tidak ditemukan.");
+
+  // wajib sebelum activeProfile berpindah: antrean yang tersisa milik profil
+  // lama, dan historyRef() selalu menunjuk profil yang sedang aktif
+  flushProgress();
 
   activeProfile = profile;
   rememberProfile(id);
@@ -377,6 +390,12 @@ export function recordPlay(item, ep = null) {
   if (!activeProfile) return;
 
   const before = history.get(item.id);
+
+  // Posisi hanya berarti untuk tayangan yang sama. Membuka episode lain berarti
+  // posisi lama tidak lagi berlaku dan hitungannya mulai dari nol.
+  const key = playKey(ep);
+  const sameTitle = before?.progressKey === key;
+
   const entry = {
     id: item.id,
     tmdbId: item.tmdbId,
@@ -390,6 +409,10 @@ export function recordPlay(item, ep = null) {
     season: ep ? ep.season : null,
     episode: ep ? ep.number : null,
     episodeName: ep?.name || "",
+    progressKey: key,
+    progressSec: sameTitle ? before.progressSec || 0 : 0,
+    durationSec: sameTitle ? before.durationSec || 0 : 0,
+    progressAt: sameTitle ? before.progressAt || "" : "",
     watchedAt: new Date().toISOString(),
     startedAt: before?.startedAt || new Date().toISOString(),
     playCount: (before?.playCount || 0) + 1,
@@ -399,6 +422,86 @@ export function recordPlay(item, ep = null) {
   setDoc(historyRef(item.id), entry).catch((err) => console.error("Simpan riwayat gagal", err));
 
   evictHistory();
+}
+
+// ---------- Posisi tontonan ----------
+// Ditumpangkan ke dokumen riwayat judulnya, bukan koleksi baru: satu judul tetap
+// satu dokumen, jadi aturan keamanan, batas MAX_HISTORY, dan pembersihan saat
+// profil dihapus semuanya ikut yang sudah ada.
+//
+// Yang diingat cuma satu posisi per judul, sejalan dengan baris "Lanjutkan
+// Menonton" yang juga hanya menampilkan satu episode terakhir per serial.
+
+// Penanda tayangan yang posisinya sedang disimpan. Film tidak punya episode,
+// jadi kuncinya tetap satu nilai supaya perbandingannya tidak perlu bercabang.
+export function playKey(ep) {
+  return ep ? `s${ep.season}e${ep.number}` : "movie";
+}
+
+export function progressOf(itemId) {
+  const entry = history.get(itemId);
+  if (!entry?.progressSec) return null;
+
+  return {
+    key: entry.progressKey || "movie",
+    seconds: entry.progressSec,
+    duration: entry.durationSec || 0,
+    at: entry.progressAt || entry.watchedAt || "",
+  };
+}
+
+// Dipanggil tiap kabar posisi dari pemutar. Salinan memori langsung benar
+// (tampilan ikut seketika), tulisan ke Firestore diantre oleh flushProgress.
+export function recordProgress(itemId, ep, seconds, duration = 0) {
+  if (!activeProfile) return null;
+
+  // hanya judul yang sudah tercatat lewat recordPlay -- tanpa itu tidak ada
+  // dokumen riwayat untuk ditumpangi
+  const before = history.get(itemId);
+  if (!before) return null;
+
+  const key = playKey(ep);
+  const sameTitle = before.progressKey === key;
+  const now = new Date().toISOString();
+
+  const entry = {
+    ...before,
+    progressKey: key,
+    progressSec: Math.max(0, Math.round(seconds)),
+    // durasi kadang belum ikut di kabar pertama; yang lama dipertahankan selama
+    // masih tayangan yang sama
+    durationSec: Math.max(0, Math.round(duration)) || (sameTitle ? before.durationSec || 0 : 0),
+    progressAt: now,
+    watchedAt: now,
+  };
+
+  history.set(itemId, entry);
+  dirtyProgress.add(itemId);
+  if (!progressTimer) progressTimer = setTimeout(flushProgress, PROGRESS_WRITE_MS);
+
+  return entry;
+}
+
+const dirtyProgress = new Set();
+let progressTimer = null;
+
+// Menulis posisi yang mengantre sekarang juga. Dipanggil otomatis tiap
+// PROGRESS_WRITE_MS, dan dari script.js saat pemutar ditutup atau tab
+// ditinggalkan -- momen ketika menunggu jeda berikutnya berisiko kehilangan
+// posisi terakhir.
+export function flushProgress() {
+  clearTimeout(progressTimer);
+  progressTimer = null;
+
+  const ids = [...dirtyProgress];
+  dirtyProgress.clear();
+  if (!activeProfile) return;
+
+  ids.forEach((id) => {
+    const entry = history.get(id);
+    if (!entry) return;
+    setDoc(historyRef(id), entry).catch((err) => console.error("Simpan posisi gagal", err));
+  });
 }
 
 // Riwayat tumbuh tanpa batas kalau dibiarkan; yang paling lama tidak ditonton

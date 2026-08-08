@@ -272,6 +272,44 @@ function duration(item) {
   return h ? `${h}h ${m}m` : `${m}m`;
 }
 
+// "23 menit" / "1 jam 5 menit" -- posisi tontonan selalu disebut dalam menit,
+// detiknya tidak menambah apa pun bagi yang membacanya
+function clockText(seconds) {
+  const mins = Math.max(1, Math.round(seconds / 60));
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return h ? `${h} jam ${m} menit` : `${m} menit`;
+}
+
+function timeAgo(iso) {
+  const then = Date.parse(iso || "");
+  if (!then) return "";
+
+  const mins = Math.round((Date.now() - then) / 60000);
+  if (mins < 1) return "baru saja";
+  if (mins < 60) return `${mins} menit lalu`;
+
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} jam lalu`;
+
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days} hari lalu`;
+
+  const months = Math.round(days / 30);
+  return months < 12 ? `${months} bulan lalu` : `${Math.round(months / 12)} tahun lalu`;
+}
+
+// Bagian tontonan yang sudah lewat, 0..1. Durasi dari pemutar yang dipakai lebih
+// dulu; kalau kabarnya belum pernah membawa durasi, runtime TMDB jadi patokan
+// (untuk serial angkanya memang per episode, jadi tetap sepadan).
+function watchFraction(entry, runtimeMin = 0) {
+  const seconds = entry?.progressSec || 0;
+  if (!seconds) return 0;
+
+  const total = entry.durationSec || runtimeMin * 60;
+  return total ? Math.min(1, seconds / total) : 0;
+}
+
 // id IMDb valid: selalu diawali "tt" lalu angka (mis. tt15398776)
 function validImdbId(id) {
   return /^tt\d{7,}$/.test(String(id || "").trim());
@@ -285,11 +323,15 @@ const PLAYER_PARAMS = { autoplay: 1 };
 
 // Film  : https://streamimdb.ru/embed/movie/tt15398776?autoplay=1
 // Serial : https://streamimdb.ru/embed/tv/tt0903747/2/5?autoplay=1  (season/episode)
-function playerUrl(item, ep = null) {
+function playerUrl(item, ep = null, resumeAt = 0) {
   if (!validImdbId(item.imdbId)) return "";
 
   const id = item.imdbId.trim();
   const query = new URLSearchParams(PLAYER_PARAMS);
+
+  // detik tempat tontonan sebelumnya berhenti; pemutar yang membacanya akan
+  // memulai dari sana, yang tidak akan memulai dari awal seperti biasa
+  if (resumeAt > 0) query.set("resumeAt", Math.round(resumeAt));
 
   if (item.type === "SHOW") {
     const path = ep ? `tv/${id}/${ep.season}/${ep.number}` : `tv/${id}`;
@@ -325,12 +367,21 @@ async function fetchSeason(tmdbId, season) {
 
 // ---------- Kartu ----------
 function cardTemplate(item, opts = {}) {
-  const { top10 = false, logo = false, index = 0, grid = false, badge = "" } = opts;
+  const { top10 = false, logo = false, index = 0, grid = false, badge = "", progress = 0 } = opts;
 
   // dipakai baris "Lanjutkan Menonton" untuk menandai episode terakhir
   const epBadge = badge
     ? `<span class="absolute bottom-1.5 left-1.5 z-10 rounded bg-black/80 px-1.5 py-0.5 text-[10px] font-bold">${esc(badge)}</span>`
     : "";
+
+  // bilah merah setipis Netflix: seberapa jauh tontonan terakhir sampai. Dibatasi
+  // 2% supaya awal yang baru sedikit tetap terlihat, bukan garis yang hilang.
+  const bar =
+    progress > 0
+      ? `<div class="absolute inset-x-0 bottom-0 z-10 h-1 bg-white/25">
+           <div class="h-full bg-red-600" style="width: ${Math.min(100, Math.max(2, progress * 100)).toFixed(1)}%"></div>
+         </div>`
+      : "";
 
   // di grid kartunya mengikuti lebar kolom; di baris geser lebarnya tetap
   const size = grid
@@ -363,6 +414,7 @@ function cardTemplate(item, opts = {}) {
         ${netflix}
         ${image}
         ${epBadge}
+        ${bar}
         ${logoSlot}
         <div class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent opacity-0 transition duration-300 group-hover/card:opacity-100"></div>
         <div class="absolute inset-x-0 bottom-0 translate-y-2 p-3 opacity-0 transition duration-300 group-hover/card:translate-y-0 group-hover/card:opacity-100">
@@ -485,6 +537,7 @@ function fillRow(key, items, opts = {}) {
         logo: opts.logo,
         index: i,
         badge: opts.badgeOf ? opts.badgeOf(item) : "",
+        progress: opts.progressOf ? opts.progressOf(item) : 0,
       })
     )
     .join("");
@@ -532,14 +585,19 @@ function renderHistoryRow() {
   // lewat fillRow seperti baris lain, supaya tata letaknya tidak bisa melenceng
   fillRow(
     "history",
-    items.map((entry) => ({
-      ...(catalog.get(entry.id) || entry),
-      providers: [],
-      rating: null,
-      // penanda episode terakhir, dibaca lagi oleh badgeOf di bawah
-      lastEp: entry.type === "SHOW" && entry.season ? `S${entry.season}:E${entry.episode}` : "",
-    })),
-    { logo: true, badgeOf: (item) => item.lastEp }
+    items.map((entry) => {
+      const known = catalog.get(entry.id) || entry;
+      return {
+        ...known,
+        providers: [],
+        rating: null,
+        // penanda episode terakhir, dibaca lagi oleh badgeOf di bawah
+        lastEp: entry.type === "SHOW" && entry.season ? `S${entry.season}:E${entry.episode}` : "",
+        // begitu juga bilah posisi tontonan, lewat progressOf
+        lastProgress: watchFraction(entry, known.runtime || 0),
+      };
+    }),
+    { logo: true, badgeOf: (item) => item.lastEp, progressOf: (item) => item.lastProgress }
   );
 
   orderPinnedRows();
@@ -827,6 +885,10 @@ function openDetail(item) {
             <button type="button" data-like title="Suka"
               class="flex h-9 w-9 items-center justify-center rounded-full border-2 border-neutral-400 bg-black/40 text-sm hover:border-white sm:h-10 sm:w-10 sm:text-base">&#128077;</button>
           </div>
+
+          <!-- diisi paintResume(): episode, posisi berhenti, dan kapan terakhir
+               ditonton oleh profil yang sedang aktif -->
+          <p data-resume class="mt-2 hidden text-xs text-neutral-300 drop-shadow sm:mt-3 sm:text-sm"></p>
         </div>
       </div>
 
@@ -993,11 +1055,40 @@ async function loadDetail(item, modal) {
   if (playerUrl(item)) {
     playBtn.disabled = false;
     playBtn.onclick = () => openPlayer(item, firstEpisode);
+    paintResume(item, modal);
   } else {
     set("[data-imdb]", "tidak ada ID IMDb");
   }
 
   if (item.type === "SHOW") loadEpisodes(item, modal);
+}
+
+// Baris kecil di bawah tombol Play: apa yang terakhir ditonton profil ini, dan
+// kapan. Untuk film sekalian mengganti tulisan tombolnya jadi "Lanjutkan" --
+// untuk serial itu urusan loadEpisodes, yang perlu tahu episodenya dulu.
+function paintResume(item, modal) {
+  const line = modal.querySelector("[data-resume]");
+  const entry = historyById(item.id);
+  if (!line || !entry) return;
+
+  const saved = Auth.progressOf(item.id);
+  const parts = [];
+
+  if (entry.type === "SHOW" && entry.season) parts.push(`S${entry.season}:E${entry.episode}`);
+  if (saved) parts.push(`berhenti di ${clockText(saved.seconds)}`);
+
+  const ago = timeAgo(entry.watchedAt);
+  if (ago) parts.push(`ditonton ${ago}`);
+
+  if (!parts.length) return;
+
+  line.textContent = parts.join(" · ");
+  line.classList.remove("hidden");
+
+  if (item.type !== "SHOW" && saved) {
+    const label = modal.querySelector("[data-play-label]");
+    if (label) label.textContent = `Lanjutkan ${clockText(saved.seconds)}`;
+  }
 }
 
 // episode yang akan diputar tombol Play: episode terakhir dari riwayat kalau
@@ -1102,7 +1193,11 @@ async function loadEpisodes(item, modal) {
     // di season lain ia mengikuti episode pertama season tersebut.
     if (resumeEp) {
       firstEpisode = resume;
-      if (playLabel) playLabel.textContent = `Lanjutkan S${resume.season}:E${resume.number}`;
+      if (playLabel) {
+        const at = Auth.progressOf(item.id);
+        const where = at && at.key === Auth.playKey(resume) ? ` ${clockText(at.seconds)}` : "";
+        playLabel.textContent = `Lanjutkan S${resume.season}:E${resume.number}${where}`;
+      }
     } else if (eps.length) {
       firstEpisode = { season: eps[0].season, number: eps[0].number };
       if (playLabel) playLabel.textContent = "Play";
@@ -1162,8 +1257,111 @@ function isPlayerOpen() {
   return !document.getElementById("player").classList.contains("hidden");
 }
 
+// ---------- Posisi tontonan ----------
+// Pemutar mengabarkan posisinya lewat postMessage (PLAYER_EVENT). Kabar itu
+// dicatat ke riwayat profil yang sedang aktif, lalu dipakai lagi sebagai
+// ?resumeAt= saat judul yang sama dibuka lain kali.
+
+// Tontonan yang tinggal sisa sedikit dianggap tamat: posisinya dinolkan supaya
+// pemutaran berikutnya mulai dari awal, bukan langsung ke layar credit.
+const NEAR_END = 0.95;
+
+// Di bawah ini belum ada yang perlu dilanjutkan -- biasanya iklan pembuka atau
+// pemutar yang baru memanaskan diri.
+const MIN_PROGRESS_SEC = 30;
+
+// Kabar bisa datang tiap detik. Salinan memori memang murah, tapi tidak ada
+// gunanya menyentuh entri riwayat setiap kali untuk selisih satu detik.
+const PROGRESS_STEP_SEC = 5;
+
+let nowPlaying = null; // { item, ep } yang sedang diputar
+let lastSavedSec = 0;
+let progressLogged = false;
+
+function savedPosition(item, ep) {
+  const saved = Auth.progressOf(item.id);
+  if (!saved || saved.key !== Auth.playKey(ep)) return 0;
+  return saved.seconds;
+}
+
+// Bentuk payload pemutar tidak dijamin: ada yang mengirim detik sebagai angka
+// biasa, ada yang membungkusnya bersama durasi. Semua bentuk yang masuk akal
+// diterima, sisanya diabaikan diam-diam.
+function readProgress(data) {
+  const raw = data?.player_progress;
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+
+  if (typeof raw === "number" || typeof raw === "string") {
+    return { seconds: num(raw), duration: num(data?.player_duration) };
+  }
+
+  if (raw && typeof raw === "object") {
+    return {
+      seconds: num(raw.watched ?? raw.current ?? raw.currentTime ?? raw.position ?? raw.seconds),
+      duration: num(raw.duration ?? raw.total ?? raw.length),
+    };
+  }
+
+  return { seconds: 0, duration: 0 };
+}
+
+window.addEventListener("message", (e) => {
+  if (e.data?.type !== "PLAYER_EVENT") return;
+
+  // Pengirimnya dicocokkan ke iframe pemutar yang sedang terbuka, bukan ke
+  // daftar origin: halaman embed bebas berpindah domain kapan saja, sedangkan
+  // window pengirim tidak bisa dipalsukan halaman lain.
+  const frame = document.querySelector("#player iframe");
+  if (!frame || e.source !== frame.contentWindow || !nowPlaying) return;
+
+  const info = e.data.data || {};
+
+  // Kabar pertama dicetak sekali: dokumentasi pemutar tidak menyebut satuan
+  // player_progress, dan ini cara tercepat memastikannya detik -- bukan persen.
+  if (!progressLogged) {
+    progressLogged = true;
+    console.debug("PLAYER_EVENT pertama:", info);
+  }
+
+  const status = info.player_status;
+  const { seconds, duration } = readProgress(info);
+  const { item, ep } = nowPlaying;
+
+  // Tamat = tidak ada yang perlu dilanjutkan. Posisinya dinolkan supaya judulnya
+  // tidak menyisakan bilah hampir penuh yang kalau ditekan langsung ke credit.
+  if (status === "ended") {
+    Auth.recordProgress(item.id, ep, 0, duration);
+    Auth.flushProgress();
+    return;
+  }
+
+  if (status !== "playing" && status !== "paused") return;
+  if (seconds < MIN_PROGRESS_SEC) return;
+
+  // jeda adalah titik simpan yang wajar, jadi ia melewati saringan langkah
+  const paused = status === "paused";
+  if (!paused && Math.abs(seconds - lastSavedSec) < PROGRESS_STEP_SEC) return;
+
+  lastSavedSec = seconds;
+
+  // sudah di ujung -> juga dianggap tamat
+  const keep = duration > 0 && seconds / duration >= NEAR_END ? 0 : seconds;
+
+  Auth.recordProgress(item.id, ep, keep, duration);
+  if (paused) Auth.flushProgress();
+});
+
+// Jeda tulis Firestore (15 detik) terlalu lama untuk momen-momen ini: posisi
+// terakhir bisa hilang kalau tabnya keburu ditutup.
+window.addEventListener("pagehide", () => Auth.flushProgress());
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) Auth.flushProgress();
+});
+
 function openPlayer(item, ep = null) {
-  const url = playerUrl(item, ep);
+  // posisi dibaca sebelum recordPlay, karena recordPlay ikut menyentuh entri
+  // riwayat yang sama
+  const url = playerUrl(item, ep, savedPosition(item, ep));
   if (!url) return;
 
   // trailer di modal dihentikan dulu, kalau tidak suaranya bertabrakan dengan
@@ -1174,6 +1372,11 @@ function openPlayer(item, ep = null) {
   // ep sudah membawa season dan nomor episodenya
   Auth.recordPlay(item, ep);
   renderHistoryRow();
+
+  // dipakai penerima kabar posisi di bawah: tanpa ini ia tidak tahu kabar yang
+  // masuk itu milik tayangan yang mana
+  nowPlaying = { item, ep };
+  lastSavedSec = 0;
 
   const el = document.getElementById("player");
   el.className = "fixed inset-0 z-[60] bg-black";
@@ -1232,6 +1435,13 @@ function closePlayer(fromPopstate = false) {
   el.className = "hidden";
   el.innerHTML = ""; // menghapus iframe = playback berhenti
   exitFullscreen();
+
+  nowPlaying = null;
+
+  // posisi terakhir ditulis sekarang, lalu barisnya digambar ulang supaya bilah
+  // hijaunya langsung sepadan dengan yang barusan ditonton
+  Auth.flushProgress();
+  renderHistoryRow();
 
   if (!fromPopstate && history.state?.netflixPlayer) history.back();
 }
