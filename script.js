@@ -6,7 +6,7 @@ const TMDB_KEY = "e514a26ed1063ffba53ecce04eeb969d";
 const TMDB = "https://api.themoviedb.org/3";
 const IMG = "https://image.tmdb.org/t/p";
 const REGION = "ID"; // dipakai untuk daftar layanan streaming
-const PLAYER = "https://streamimdb.ru/embed";
+const PLAYER = "https://vaplayer.ru/embed/";
 const STORAGE_KEY = "netflix:saved";
 
 // Hanya judul yang benar-benar ada di layanan streaming Indonesia yang boleh
@@ -616,7 +616,7 @@ function animateDetailIn(modal) {
 // terlihat berkedip.
 // gambar ditahan selama ini sebelum trailer ditampilkan; iframe sudah memuat
 // sejak detik pertama, jadi jeda ini benar-benar dipakai untuk menyangga
-const TRAILER_HOLD_MS = 5000;
+const TRAILER_HOLD_MS = 5500;
 
 let trailerTimer = null;
 let trailerFallback = null;
@@ -1105,16 +1105,7 @@ function closeDetail() {
 }
 
 // ---------- Player fullscreen ----------
-// Halaman embed mendeteksi atribut "sandbox" dan langsung redirect, jadi klik
-// diblokir pakai lapisan bening di atas iframe (bukan sandbox).
-let screenLocked = true;
 let barTimer = null;
-let toastTimer = null;
-let toggleLock = null; // diisi saat player terbuka, dipakai shortcut keyboard
-
-// Di HP tidak ada papan ketik, jadi shortcut "L" tidak berguna -- kuncinya
-// harus berupa tombol yang selalu kelihatan.
-const isTouch = window.matchMedia("(pointer: coarse)").matches;
 
 function requestFullscreen(el) {
   const fn = el.requestFullscreen || el.webkitRequestFullscreen;
@@ -1161,8 +1152,6 @@ function openPlayer(item, ep = null) {
     ></iframe>
     
 
-    <div data-shield class="absolute inset-0 z-10"></div>
-
     <div data-bar class="absolute inset-x-0 top-0 z-20 flex items-center gap-2 bg-gradient-to-b from-black/90 via-black/50 to-transparent p-3 transition-opacity duration-300 sm:gap-4 sm:p-4">
       <button type="button" data-back
         class="flex shrink-0 items-center gap-2 rounded-full bg-black/70 px-3 py-2 text-sm font-semibold hover:bg-black sm:px-4">
@@ -1174,77 +1163,24 @@ function openPlayer(item, ep = null) {
           ${ep ? `S${ep.season}:E${ep.number} &middot; ` : ""}${esc(item.year)} &middot; ${duration(item)}
         </p>
       </div>
-      <button type="button" data-relock
-        class="ml-auto hidden shrink-0 rounded-full bg-black/70 px-3 py-2 text-xs font-semibold hover:bg-black sm:px-4">
-        &#128274; <span class="hidden sm:inline">Kunci lagi</span>
-      </button>
     </div>
-
-    <div data-toast
-      class="pointer-events-none absolute bottom-8 left-1/2 z-20 -translate-x-1/2 rounded-full bg-black/80 px-4 py-2 text-sm font-semibold opacity-0 transition-opacity duration-300"></div>
   `;
 
-  const shield = el.querySelector("[data-shield]");
   const bar = el.querySelector("[data-bar]");
-  const toast = el.querySelector("[data-toast]");
-  const relockBtn = el.querySelector("[data-relock]");
-
-  const showToast = (html, ms = 2000) => {
-    toast.innerHTML = html;
-    toast.classList.remove("opacity-0");
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toast.classList.add("opacity-0"), ms);
-  };
-
-  const applyLock = (announce = false) => {
-    shield.classList.toggle("pointer-events-none", !screenLocked);
-
-    // Di HP tombolnya selalu ada karena tidak ada cara lain membuka kunci.
-    // Di desktop tetap tersembunyi saat terkunci, karena ada shortcut "L" --
-    // tombolnya baru muncul setelah dibuka, sebab "L" tidak terbaca lagi
-    // kalau fokus sudah pindah ke dalam iframe.
-    relockBtn.classList.toggle("hidden", screenLocked && !isTouch);
-    if (isTouch) {
-      relockBtn.innerHTML = screenLocked
-        ? `&#128274; <span class="hidden sm:inline">Buka kunci</span>`
-        : `&#128275; <span class="hidden sm:inline">Kunci lagi</span>`;
-    }
-
-    if (announce) {
-      const caraMengunci = isTouch ? "pakai tombol di atas" : "tekan L";
-      showToast(
-        screenLocked
-          ? "&#128274; Layar dikunci"
-          : `&#128275; Layar dibuka &middot; ${caraMengunci} untuk mengunci`
-      );
-    }
-
-    if (!screenLocked) showBar(false); // kontrol player dipakai -> bar jangan hilang
-  };
 
   const showBar = (autoHide = true) => {
     bar.classList.remove("opacity-0");
     clearTimeout(barTimer);
-    if (autoHide && screenLocked) {
+    if (autoHide) {
       barTimer = setTimeout(() => bar.classList.add("opacity-0"), 3000);
     }
   };
 
   el.querySelector("[data-back]").onclick = () => closePlayer();
 
-  // di desktop dipanggil shortcut "L", di HP oleh tombol di bar
-  toggleLock = () => {
-    screenLocked = !screenLocked;
-    applyLock(true);
-    showBar();
-  };
-  relockBtn.onclick = toggleLock;
-
-  // pointer di atas shield tetap terbaca karena shield anak dari #player
   el.addEventListener("mousemove", () => showBar());
   el.addEventListener("touchstart", () => showBar(), { passive: true });
 
-  applyLock();
   showBar();
   requestFullscreen(el);
 
@@ -1257,9 +1193,6 @@ function closePlayer(fromPopstate = false) {
   if (el.classList.contains("hidden")) return;
 
   clearTimeout(barTimer);
-  clearTimeout(toastTimer);
-  toggleLock = null;
-  screenLocked = true; // sesi player berikutnya selalu mulai dalam keadaan terkunci
   el.className = "hidden";
   el.innerHTML = ""; // menghapus iframe = playback berhenti
   exitFullscreen();
@@ -1440,13 +1373,6 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (isPlayerOpen()) closePlayer();
     else closeDetail();
-    return;
-  }
-
-  // shortcut tersembunyi: buka/kunci lagi lapisan pelindung player
-  if (e.key.toLowerCase() === "l" && isPlayerOpen()) {
-    e.preventDefault();
-    toggleLock?.();
   }
 });
 

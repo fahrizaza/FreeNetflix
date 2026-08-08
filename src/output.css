@@ -296,9 +296,6 @@
   .bottom-1\.5 {
     bottom: calc(var(--spacing) * 1.5);
   }
-  .bottom-8 {
-    bottom: calc(var(--spacing) * 8);
-  }
   .left-0 {
     left: 0px;
   }
@@ -400,9 +397,6 @@
   }
   .mb-10 {
     margin-bottom: calc(var(--spacing) * 10);
-  }
-  .ml-auto {
-    margin-left: auto;
   }
   .line-clamp-1 {
     overflow: hidden;
