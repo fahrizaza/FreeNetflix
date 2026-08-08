@@ -801,6 +801,15 @@ const TRAILER_HOLD_MS = 5500;
 let trailerTimer = null;
 let trailerFallback = null;
 let trailerPlaying = null; // dipanggil saat pemutar mengabarkan sudah jalan
+let trailerPaused = null; // dipanggil saat pemutar mengabarkan terjeda
+
+// Suara trailer: menyala kecuali penonton sendiri yang mematikannya. Disimpan
+// di luar startModalTrailer supaya pilihannya bertahan saat membuka judul lain
+// -- memaksa suara menyala lagi tiap kali modal dibuka itu menjengkelkan.
+let trailerSound = true;
+
+// Trailer bukan tontonan utama, jadi tidak perlu sekeras pemutar filmnya.
+const TRAILER_VOLUME = 60;
 
 function trailerAllowed() {
   const conn = navigator.connection || {};
@@ -810,11 +819,12 @@ function trailerAllowed() {
 
 // Perintah ke pemutar YouTube lewat postMessage; enablejsapi=1 di URL yang
 // membuatnya mau mendengarkan, jadi tidak perlu memuat pustaka apa pun.
-function ytCommand(iframe, func) {
-  iframe?.contentWindow?.postMessage(
-    JSON.stringify({ event: "command", func, args: [] }),
-    "*"
-  );
+//
+// args dulu dipatok kosong, sehingga perintah yang butuh nilai -- setVolume
+// yang paling penting -- tidak pernah bisa dikirim. Akibatnya "nyalakan suara"
+// bisa berakhir senyap kalau volume pemutarnya kebetulan nol.
+function ytCommand(iframe, func, args = []) {
+  iframe?.contentWindow?.postMessage(JSON.stringify({ event: "command", func, args }), "*");
 }
 
 // Pemutar YouTube mengabarkan statusnya lewat postMessage setelah menerima
@@ -842,6 +852,7 @@ window.addEventListener("message", (e) => {
 
   const state = typeof data.info === "number" ? data.info : data.info?.playerState;
   if (state === 1) trailerPlaying?.(); // 1 = sedang berjalan
+  if (state === 2) trailerPaused?.(); // 2 = terjeda -- bisa jadi suaranya ditolak
   if (state === 0) stopModalTrailer(); // 0 = habis (loop biasanya mencegah ini)
 });
 
@@ -851,6 +862,7 @@ function clearTrailerTimers() {
   trailerTimer = null;
   trailerFallback = null;
   trailerPlaying = null;
+  trailerPaused = null; // kalau tertinggal, kabar jeda milik trailer lama masih ditanggapi
 }
 
 function stopModalTrailer() {
@@ -903,11 +915,50 @@ function startModalTrailer(item, modal) {
   );
 
   const frame = stage.querySelector("[data-trailer]");
+
+  // Selalu MULAI bisu, apa pun pilihan penonton. Autoplay bersuara ditolak
+  // kebanyakan browser, dan yang ditolak bukan cuma suaranya -- videonya ikut
+  // tidak jalan. Jadi trailernya dijalankan bisu dulu, baru suaranya dinyalakan
+  // sesaat kemudian lewat perintah, saat pemutarnya sudah benar-benar berjalan.
   let muted = true;
+
+  // Menandai bahwa kitalah yang barusan menyalakan suara, supaya jeda yang
+  // menyusul bisa dikenali sebagai penolakan browser -- bukan penonton yang
+  // menjeda sendiri.
+  let baruDinyalakan = false;
 
   const paint = () => {
     btn.innerHTML = muted ? SPEAKER_OFF : SPEAKER_ON;
     btn.title = muted ? "Nyalakan suara" : "Bisukan";
+  };
+
+  const nyalakanSuara = () => {
+    muted = false;
+    baruDinyalakan = true;
+    ytCommand(frame, "unMute");
+    ytCommand(frame, "setVolume", [TRAILER_VOLUME]); // unMute saja bisa senyap kalau volumenya 0
+    paint();
+
+    setTimeout(() => (baruDinyalakan = false), 1500);
+  };
+
+  const bisukan = () => {
+    muted = true;
+    baruDinyalakan = false;
+    ytCommand(frame, "mute");
+    paint();
+  };
+
+  // Browser yang menolak pemutaran bersuara tidak mengembalikan galat -- ia
+  // menjeda videonya. Kalau itu terjadi tepat setelah kita menyalakan suara,
+  // trailernya dikembalikan ke bisu dan dijalankan lagi. Trailer bisu jauh
+  // lebih baik daripada trailer yang membeku.
+  trailerPaused = () => {
+    if (!baruDinyalakan || !frame.isConnected) return;
+
+    trailerSound = false; // jangan coba-coba lagi di judul berikutnya
+    bisukan();
+    ytCommand(frame, "playVideo");
   };
 
   // Dua syarat yang harus sama-sama terpenuhi sebelum ditampilkan:
@@ -928,6 +979,11 @@ function startModalTrailer(item, modal) {
   trailerPlaying = () => {
     playing = true;
     reveal();
+
+    // Modal ini hanya bisa terbuka karena penonton mengklik sesuatu, dan klik
+    // itulah izin yang dibutuhkan browser untuk memperbolehkan suara. Jadi
+    // begitu videonya benar-benar jalan, suaranya dinyalakan.
+    if (trailerSound && muted) nyalakanSuara();
   };
 
   trailerTimer = setTimeout(() => {
@@ -959,9 +1015,11 @@ function startModalTrailer(item, modal) {
   };
 
   btn.onclick = () => {
-    muted = !muted;
-    ytCommand(frame, muted ? "mute" : "unMute");
-    paint();
+    if (muted) nyalakanSuara();
+    else bisukan();
+
+    // pilihan penonton yang menang, dan diingat sampai judul berikutnya
+    trailerSound = !muted;
   };
 }
 
@@ -969,6 +1027,10 @@ function openDetail(item) {
   const modal = document.getElementById("modal");
   firstEpisode = null;
   clearTrailerTimers();
+
+  // hero di belakang modal ikut berbunyi kalau dibiarkan, bertumpuk dengan
+  // trailer yang sebentar lagi jalan di sini
+  pauseHero();
 
   modal.className =
     "fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80 p-2 py-4 sm:p-4 sm:py-10";
@@ -1399,6 +1461,10 @@ function closeDetail() {
     // (baris digambar ulang), biarkan browser yang menentukan
     if (focusReturn?.isConnected) focusReturn.focus({ preventScroll: true });
     focusReturn = null;
+
+    // modal sudah benar-benar tertutup di sini, jadi heroMayPlay() melihat
+    // keadaan yang sebenarnya
+    playHero();
   };
 
   const panel = modal.firstElementChild;
@@ -1592,9 +1658,10 @@ function openPlayer(item, ep = null) {
   const url = playerUrl(item, ep, savedPosition(item, ep));
   if (!url) return;
 
-  // trailer di modal dihentikan dulu, kalau tidak suaranya bertabrakan dengan
-  // film yang mulai diputar di atasnya
+  // trailer di modal dan video hero dihentikan dulu, kalau tidak suaranya
+  // bertabrakan dengan film yang mulai diputar di atasnya
   stopModalTrailer();
+  pauseHero();
 
   // Judul lain bisa dipilih selagi pemutar mengecil. innerHTML di bawah akan
   // membuang iframe yang sedang jalan, jadi posisi tontonannya ditulis dulu --
@@ -1617,12 +1684,19 @@ function openPlayer(item, ep = null) {
   // di DOM membuat browser memuatnya ulang, dan filmnya akan mulai dari awal --
   // itulah kenapa mengecil hanya mengganti kelas wadahnya, bukan isinya.
   el.innerHTML = `
+    <!-- allowfullscreen berdiri sendiri, TANPA titik koma. Sebelumnya baris ini
+         berbunyi "allowfullscreen; unmuted; unmuted; web-share", dan karena
+         nama atribut HTML boleh memuat titik koma, browser mengurainya jadi
+         atribut bernama "allowfullscreen;" -- nama yang tidak dikenal siapa
+         pun. Akibatnya tombol layar penuh milik pemutar embed tidak berfungsi.
+         "unmuted" juga bukan atribut iframe yang nyata, dan web-share tempatnya
+         di dalam allow. -->
     <iframe
       src="${esc(url)}"
       title="${esc(item.title)}"
       class="absolute inset-0 h-full w-full border-0"
-      allow="autoplay; fullscreen; picture-in-picture; encrypted-media"
-      allowfullscreen; unmuted; unmuted; web-share
+      allow="autoplay; fullscreen; picture-in-picture; encrypted-media; web-share"
+      allowfullscreen
       referrerpolicy="origin"
     ></iframe>
 
@@ -1700,8 +1774,18 @@ function openPlayer(item, ep = null) {
   el.querySelector("[data-max]").onclick = () => setPlayerMode("full");
   el.querySelector("[data-shield]").onclick = () => setPlayerMode("full");
 
+  // Kedua pendengar ini hanya menyala selama kursor belum masuk ke iframe.
+  // Begitu masuk, peristiwanya jadi milik dokumen di dalam iframe dan tidak
+  // pernah sampai ke sini lagi -- karena itu tombol keluar tidak boleh
+  // bergantung padanya untuk tetap terlihat.
   el.addEventListener("mousemove", () => showPlayerBar());
   el.addEventListener("touchstart", () => showPlayerBar(), { passive: true });
+
+  // Satu-satunya bagian yang masih bisa mendeteksi kursor saat film menutupi
+  // layar adalah tombol ini sendiri. Mengarahkan kursor ke sana memunculkan
+  // kembali judulnya -- tanpa ini, judul yang sudah menghilang tidak akan
+  // pernah bisa dipanggil lagi dengan tetikus.
+  controls.addEventListener("pointerenter", () => showPlayerBar());
 
   setPlayerMode("full");
 
@@ -1782,22 +1866,55 @@ function closePlayer(fromPopstate = false) {
   Auth.flushProgress();
   renderHistoryRow();
 
+  playHero(); // beranda kembali terlihat -> hero boleh berbunyi lagi
+
   if (!fromPopstate && history.state?.netflixPlayer) history.back();
 }
 
-// Keluar dari layar penuh berarti pengguna sudah selesai -- kecuali kalau
-// keluarnya memang karena pemutarnya baru saja dikecilkan.
+// Elemen yang memegang layar penuh sebelum perubahan terakhir. Dipakai
+// membedakan siapa yang barusan keluar.
+let lastFullscreenEl = null;
+
+// Keluar dari layar penuh berarti pengguna sudah selesai -- kecuali dalam dua
+// hal: pemutarnya baru saja dikecilkan, atau yang barusan keluar itu pemutar
+// embed-nya, bukan wadah kita.
 function onFullscreenGone() {
   if (!isPlayerOpen() || playerMode === "mini") return;
+
+  const el = document.getElementById("player");
+
+  // Menekan tombol layar penuh milik embed memindahkan status layar penuh dari
+  // wadah kita ke iframe. Saat pengguna keluar dari sana, sebagian browser
+  // mengembalikannya ke wadah kita sendiri, sebagian lain melepasnya sama
+  // sekali -- dan yang terakhir itu dulu terbaca sebagai "sudah selesai" lalu
+  // menutup filmnya. Yang benar: minta layar penuh lagi untuk wadah kita.
+  if (lastFullscreenEl && lastFullscreenEl !== el && el.contains(lastFullscreenEl)) {
+    // Kalau permintaannya ditolak (di luar jendela gestur pengguna), pemutar
+    // tetap menutupi seluruh viewport lewat "fixed inset-0" -- hanya kehilangan
+    // layar penuh sungguhan. Jauh lebih baik daripada filmnya ikut tertutup.
+    requestFullscreen(el).then(lockLandscape);
+    return;
+  }
+
   closePlayer();
 }
 
-document.addEventListener("fullscreenchange", () => {
-  if (!document.fullscreenElement) onFullscreenGone();
-});
-document.addEventListener("webkitfullscreenchange", () => {
-  if (!document.webkitFullscreenElement) onFullscreenGone();
-});
+function onFullscreenChange() {
+  const now = document.fullscreenElement || document.webkitFullscreenElement || null;
+
+  if (now) {
+    lastFullscreenEl = now;
+    return;
+  }
+
+  // Layar penuh benar-benar lepas. lastFullscreenEl sengaja belum diperbarui:
+  // justru nilai lamanya yang dibutuhkan untuk tahu siapa yang barusan keluar.
+  onFullscreenGone();
+  lastFullscreenEl = null;
+}
+
+document.addEventListener("fullscreenchange", onFullscreenChange);
+document.addEventListener("webkitfullscreenchange", onFullscreenChange);
 window.addEventListener("popstate", () => closePlayer(true));
 
 // ---------- Hero ----------
@@ -1839,6 +1956,52 @@ function heroVideoAllowed() {
 const SPEAKER_ON = `<svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 9v6h4l5 4V5L9 9H5Z" stroke-linejoin="round"/><path d="M17 9a4 4 0 0 1 0 6" stroke-linecap="round"/></svg>`;
 const SPEAKER_OFF = `<svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 9v6h4l5 4V5L9 9H5Z" stroke-linejoin="round"/><path d="m17 10 4 4m0-4-4 4" stroke-linecap="round"/></svg>`;
 
+// ---------- Suara hero ----------
+// Hero itu satu-satunya yang berbunyi selama beranda dibuka, jadi ia harus
+// diam begitu ada yang lain berbunyi di atasnya: trailer di modal detail, dan
+// film di pemutar. Tanpa ini dua suara bertumpuk.
+const HERO_VOLUME = 0.5;
+
+let heroVideo = null;
+let heroSound = true; // sampai penonton sendiri mematikannya
+let heroInView = false;
+let paintHeroMute = null;
+
+// Boleh berbunyi hanya kalau hero benar-benar sedang jadi yang dilihat.
+function heroMayPlay() {
+  return (
+    heroInView &&
+    !isPlayerOpen() &&
+    document.getElementById("modal").classList.contains("hidden")
+  );
+}
+
+function playHero() {
+  if (!heroVideo?.src || !heroMayPlay()) return;
+
+  // Dicoba bersuara lebih dulu. Kalau browser menolak, janji play() ditolak --
+  // beda dengan YouTube yang diam-diam menjeda -- jadi penolakannya bisa
+  // ditangkap dan dibalas dengan mundur ke bisu.
+  if (heroSound) {
+    heroVideo.muted = false;
+    heroVideo.volume = HERO_VOLUME;
+  }
+  paintHeroMute?.();
+
+  heroVideo.play().catch(() => {
+    if (heroVideo.muted) return; // ditolak karena sebab lain, bukan suaranya
+
+    heroSound = false;
+    heroVideo.muted = true;
+    paintHeroMute?.();
+    heroVideo.play().catch(() => {}); // ditolak lagi = biarkan gambarnya saja
+  });
+}
+
+function pauseHero() {
+  heroVideo?.pause();
+}
+
 function setupHeroVideo() {
   const video = document.getElementById("hero-video");
   const mute = document.getElementById("hero-mute");
@@ -1847,10 +2010,14 @@ function setupHeroVideo() {
 
   if (!heroVideoAllowed()) return;
 
+  heroVideo = video;
+
   const paintMute = () => {
     mute.innerHTML = video.muted ? SPEAKER_OFF : SPEAKER_ON;
     mute.title = video.muted ? "Nyalakan suara" : "Bisukan";
   };
+
+  paintHeroMute = paintMute;
 
   const show = () => {
     video.classList.add("opacity-100");
@@ -1869,18 +2036,21 @@ function setupHeroVideo() {
   video.addEventListener("error", hide);
 
   mute.onclick = () => {
+    heroSound = video.muted; // yang ditekan itu kebalikan keadaan sekarang
     video.muted = !video.muted;
+    if (!video.muted) video.volume = HERO_VOLUME;
     paintMute();
   };
   paintMute();
 
   // hero berhenti kalau tergulir keluar layar: tidak ada gunanya membebani
-  // prosesor untuk sesuatu yang tidak terlihat
+  // prosesor untuk sesuatu yang tidak terlihat -- apalagi kalau bersuara
   const hero = document.getElementById("hero");
   new IntersectionObserver(
     ([entry]) => {
+      heroInView = entry.isIntersecting;
       if (!video.src) return;
-      if (entry.isIntersecting) video.play().catch(() => {});
+      if (heroInView) playHero();
       else video.pause();
     },
     { threshold: 0.25 }
@@ -1888,6 +2058,7 @@ function setupHeroVideo() {
 
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) video.pause();
+    else playHero(); // kembali ke tab ini -> lanjutkan, kalau memang boleh
   });
 
   // unduhan ditunda sampai halaman tidak sibuk lagi, supaya baris film dan
@@ -1896,7 +2067,7 @@ function setupHeroVideo() {
   later(
     () => {
       video.src = HERO.video;
-      video.play().catch(() => {}); // ditolak = biarkan gambarnya saja
+      playHero();
     },
     { timeout: 4000 }
   );
