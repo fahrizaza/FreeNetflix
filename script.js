@@ -271,7 +271,12 @@ async function fetchSeason(tmdbId, season) {
 
 // ---------- Kartu ----------
 function cardTemplate(item, opts = {}) {
-  const { top10 = false, logo = false, index = 0 } = opts;
+  const { top10 = false, logo = false, index = 0, grid = false } = opts;
+
+  // di grid kartunya mengikuti lebar kolom; di baris geser lebarnya tetap
+  const size = grid
+    ? "w-full"
+    : "w-[160px] shrink-0 snap-start sm:w-[200px] md:w-[240px]";
 
   // wadah logo dibiarkan kosong; diisi menyusul oleh loadLogos()
   const logoSlot = logo
@@ -293,7 +298,7 @@ function cardTemplate(item, opts = {}) {
 
   return `
     <button type="button" data-id="${esc(item.id)}" data-index="${index}"
-      class="group/card w-[160px] shrink-0 snap-start text-left sm:w-[200px] md:w-[240px]">
+      class="group/card relative ${size} text-left transition-transform duration-300 md:hover:z-30 md:hover:scale-110">
       <div class="relative aspect-video overflow-hidden rounded-md bg-neutral-800 transition duration-300 group-hover/card:ring-2 group-hover/card:ring-white/60">
         ${top10Badge}
         ${netflix}
@@ -322,8 +327,10 @@ function rowShell(key, title) {
       <button type="button" data-scroll="-1"
         class="absolute left-0 top-1/2 z-20 hidden h-24 w-8 -translate-y-1/2 items-center justify-center rounded-r-md bg-black/60 text-2xl opacity-0 transition group-hover/row:opacity-100 md:flex">&#8249;</button>
 
+      <!-- py memberi ruang untuk kartu yang membesar saat hover; tanpa itu
+           bagian atas-bawahnya terpotong karena overflow-x ikut memotong -->
       <div data-track
-        class="flex snap-x snap-mandatory gap-2 overflow-x-auto scroll-smooth px-4 pb-2 md:px-8 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        class="flex snap-x snap-mandatory gap-2 overflow-x-auto scroll-smooth px-4 py-3 md:px-8 md:py-5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         ${skeletonCard().repeat(6)}
       </div>
 
@@ -373,15 +380,17 @@ async function loadLogos(key, start) {
   await Promise.all(batch.map((item) => fetchLogo(item).then(() => paintLogo(key, item))));
 }
 
-function setupLogos(key, items) {
+// box  : wadah kartu yang diamati
+// root : acuan IntersectionObserver -- baris geser memantau di dalam dirinya
+//        sendiri, grid ikut gulir halaman jadi acuannya viewport (null)
+function setupLogos(key, items, box = null, root = box) {
   rowItems.set(key, items);
   items.forEach((item) => item.logoLoaded && paintLogo(key, item)); // dari cache
   loadLogos(key, 0);
 
-  const track = document.querySelector(`[data-row="${key}"] [data-track]`);
-  if (!track) return;
+  const container = box || document.querySelector(`[data-row="${key}"] [data-track]`);
+  if (!container) return;
 
-  // root = track, jadi yang dipantau posisi kartu di dalam baris geser itu
   const io = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
@@ -390,10 +399,10 @@ function setupLogos(key, items) {
         if (!items[index]?.logoLoaded) loadLogos(key, index);
       }
     },
-    { root: track, threshold: 0.1 }
+    { root: box ? root : container, threshold: 0.1 }
   );
 
-  track.querySelectorAll("[data-index]").forEach((card) => io.observe(card));
+  container.querySelectorAll("[data-index]").forEach((card) => io.observe(card));
 }
 
 function fillRow(key, items, opts = {}) {
@@ -794,7 +803,7 @@ function openPlayer(item, ep = null) {
       <div class="min-w-0">
         <p class="truncate text-sm font-semibold sm:text-base">${esc(item.title)}</p>
         <p class="truncate text-[11px] text-neutral-400 sm:text-xs">
-          ${ep ? `S${ep.season}:E${ep.number} &middot; ` : ""}${esc(item.year)} &middot; ${esc(item.imdbId)}
+          ${ep ? `S${ep.season}:E${ep.number} &middot; ` : ""}${esc(item.year)} &middot; ${duration(item)}
         </p>
       </div>
       <button type="button" data-relock
@@ -968,22 +977,87 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-document.getElementById("search-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const query = document.getElementById("search-input").value.trim();
-  if (!query) return;
+// ---------- Pencarian ----------
+// Hasilnya menggantikan seluruh beranda seperti di Netflix, bukan disisipkan
+// sebagai satu baris. Kotak dikosongkan -> beranda kembali seperti semula.
+const SEARCH_DEBOUNCE_MS = 350;
 
-  const rows = document.getElementById("rows");
-  document.querySelector('[data-row="search"]')?.remove();
-  rows.insertAdjacentHTML("afterbegin", rowShell("search", `Hasil untuk "${query}"`));
-  rows.scrollIntoView({ behavior: "smooth" });
+let searchTimer = null;
+let searchToken = 0; // menjaga hasil lama tidak menimpa hasil ketikan terbaru
 
+function showHome() {
+  document.getElementById("search-results").classList.add("hidden");
+  document.getElementById("hero").classList.remove("hidden");
+  document.getElementById("rows").classList.remove("hidden");
+}
+
+function showSearch() {
+  document.getElementById("search-results").classList.remove("hidden");
+  document.getElementById("hero").classList.add("hidden");
+  document.getElementById("rows").classList.add("hidden");
+}
+
+function skeletonGridCard() {
+  return `<div class="animate-pulse"><div class="aspect-video rounded-md bg-neutral-800"></div></div>`;
+}
+
+async function runSearch(query) {
+  const grid = document.getElementById("search-grid");
+  const status = document.getElementById("search-status");
+  const token = ++searchToken;
+
+  showSearch();
+  status.textContent = `Mencari "${query}"...`;
+  grid.innerHTML = skeletonGridCard().repeat(10);
+
+  let items;
   try {
-    fillRow("search", await fetchList(`/search/multi?query=${encodeURIComponent(query)}`));
+    items = await fetchList(`/search/multi?query=${encodeURIComponent(query)}`);
   } catch (err) {
-    fillRow("search", []);
     console.error(err);
+    if (token !== searchToken) return;
+    status.textContent = "Pencarian gagal. Coba lagi sebentar.";
+    grid.innerHTML = "";
+    return;
   }
+
+  if (token !== searchToken) return; // sudah ada ketikan yang lebih baru
+
+  if (!items.length) {
+    status.textContent = `Tidak ada hasil untuk "${query}".`;
+    grid.innerHTML = "";
+    return;
+  }
+
+  status.innerHTML = `${items.length} hasil untuk <span class="font-semibold text-white">${esc(query)}</span>`;
+  grid.innerHTML = items
+    .map((item, i) => cardTemplate(item, { logo: true, grid: true, index: i }))
+    .join("");
+
+  setupLogos("search", items, grid, null);
+}
+
+function onSearchInput() {
+  const query = document.getElementById("search-input").value.trim();
+  clearTimeout(searchTimer);
+
+  if (!query) {
+    searchToken++; // batalkan hasil yang masih dalam perjalanan
+    showHome();
+    return;
+  }
+
+  searchTimer = setTimeout(() => runSearch(query), SEARCH_DEBOUNCE_MS);
+}
+
+document.getElementById("search-input").addEventListener("input", onSearchInput);
+
+document.getElementById("search-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  clearTimeout(searchTimer);
+
+  const query = document.getElementById("search-input").value.trim();
+  if (query) runSearch(query);
 });
 
 // ---------- Init ----------
