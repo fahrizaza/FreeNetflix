@@ -127,6 +127,33 @@
   animation: gate-sweep 1.1s ease-in-out infinite;
 }
 
+/* Tombol keluar dan kecilkan di pemutar.
+
+   Selalu ada di layar -- tidak pernah ikut menghilang bersama bilah judul --
+   tapi dibuat samar supaya tidak mencuri perhatian dari filmnya. Begitu
+   disentuh, di-hover, atau disorot remote, ia jadi pekat lagi.
+
+   Kelas .is-awake dipasang JS selagi bilah judul sedang tampak, jadi ketiga
+   kontrol itu terang bersamaan lalu meredup bersamaan. */
+.player-controls {
+  opacity: 0.4;
+  transition: opacity 0.25s ease;
+}
+
+.player-controls:hover,
+.player-controls:focus-within,
+.player-controls.is-awake {
+  opacity: 1;
+}
+
+/* Di layar sentuh, hover tidak ada dan jari menutupi tombolnya sendiri.
+   Sedikit lebih pekat supaya tetap terlihat tanpa perlu disentuh dulu. */
+@media (hover: none) {
+  .player-controls {
+    opacity: 0.55;
+  }
+}
+
 /* Pemutar yang dikecilkan: film tetap berjalan di pojok sementara halaman di
    baliknya bisa dipakai lagi.
 

@@ -1428,15 +1428,49 @@ function requestFullscreen(el) {
   const fn = el.requestFullscreen || el.webkitRequestFullscreen;
   try {
     const result = fn?.call(el, { navigationUI: "hide" });
-    result?.catch?.(() => {}); // ditolak browser (mis. tanpa gestur) -> tetap tampil
+
+    // Promise-nya dikembalikan, bukan ditelan: kunci orientasi baru boleh
+    // dicoba SETELAH layar penuh benar-benar didapat.
+    return Promise.resolve(result).catch(() => {}); // ditolak browser -> tetap tampil
   } catch {
-    /* diabaikan */
+    return Promise.resolve();
   }
 }
 
 function exitFullscreen() {
   if (document.fullscreenElement) document.exitFullscreen?.();
   else if (document.webkitFullscreenElement) document.webkitExitFullscreen?.();
+}
+
+// ---------- Orientasi layar ----------
+// Film itu mendatar. Di ponsel yang dipegang tegak, memutar paksa ke mendatar
+// membuatnya memenuhi layar tanpa pengguna perlu memutar ponselnya sendiri --
+// dan ini menang atas kunci rotasi yang menyala di setelan ponsel, karena API
+// ini memang menggantikan orientasi terkunci selama halaman berada di layar
+// penuh.
+//
+// PENTING: Safari di iPhone dan iPad tidak punya screen.orientation.lock sama
+// sekali. Tidak ada cara apa pun bagi halaman web memutar layar di sana; di
+// iOS pemutarnya hanya mengikuti orientasi ponsel seperti biasa. Bukan bug,
+// memang tidak tersedia.
+async function lockLandscape() {
+  // Layar lebar tidak perlu diputar, dan mengunci di laptop hanya menghasilkan
+  // penolakan yang tidak berguna.
+  if (window.matchMedia("(min-width: 1024px)").matches) return;
+
+  try {
+    await screen.orientation?.lock?.("landscape");
+  } catch {
+    /* iOS tidak punya API-nya, dan Android menolak kalau belum layar penuh */
+  }
+}
+
+function unlockOrientation() {
+  try {
+    screen.orientation?.unlock?.();
+  } catch {
+    /* diabaikan */
+  }
 }
 
 function isPlayerOpen() {
@@ -1597,23 +1631,35 @@ function openPlayer(item, ep = null) {
          diklik untuk dibesarkan lagi. -->
     <div data-shield class="absolute inset-0 z-10 hidden cursor-pointer"></div>
 
-    <div data-bar class="absolute inset-x-0 top-0 z-20 flex items-center gap-2 bg-gradient-to-b from-black/90 via-black/50 to-transparent p-3 transition-opacity duration-300 sm:gap-4 sm:p-4">
-      <button type="button" data-back
-        class="flex h-11 shrink-0 items-center gap-2 rounded-full bg-black/70 px-3 text-sm font-semibold hover:bg-black sm:px-4">
-        &#8592; <span class="hidden sm:inline">Kembali</span>
-      </button>
-
-      <button type="button" data-min title="Kecilkan (M)"
-        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/70 text-lg leading-none hover:bg-black">
-        &#8600;
-      </button>
-
+    <!-- Judul dan keterangan boleh menghilang sendiri setelah beberapa detik;
+         yang tidak boleh hilang cuma tombol keluar, dan itu ada di lapisan
+         terpisah di bawah ini. Padding kiri disisakan selebar tombol itu. -->
+    <!-- pl harus melewati kedua tombol di lapisan kontrol, kalau tidak judulnya
+         tertimpa: 12px tepi + 44 + 8 + 44 = 108px (di sm jadi 112px) -->
+    <div data-bar class="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center bg-gradient-to-b from-black/90 via-black/50 to-transparent py-3 pl-28 pr-3 transition-opacity duration-300 sm:py-4 sm:pl-32 sm:pr-4">
       <div class="min-w-0">
         <p class="truncate text-sm font-semibold sm:text-base">${esc(item.title)}</p>
         <p class="truncate text-[11px] text-neutral-400 sm:text-xs">
           ${ep ? `S${ep.season}:E${ep.number} &middot; ` : ""}${esc(item.year)} &middot; ${duration(item)}
         </p>
       </div>
+    </div>
+
+    <!-- Tombol keluar dan kecilkan: SELALU tampak, tidak pernah ikut
+         menghilang bersama bilah judul. Sengaja hanya lambang tanpa tulisan
+         dan setengah tembus pandang supaya tidak mencuri perhatian dari
+         filmnya; begitu disentuh, di-hover, atau disorot remote, ia jadi
+         pekat lagi. z-30 menaruhnya di atas bilah judul. -->
+    <div data-controls class="player-controls absolute left-3 top-3 z-30 flex items-center gap-2 sm:left-4 sm:top-4">
+      <button type="button" data-back title="Kembali" aria-label="Kembali"
+        class="flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-xl leading-none backdrop-blur-sm">
+        &#8592;
+      </button>
+
+      <button type="button" data-min title="Kecilkan (M)" aria-label="Kecilkan"
+        class="flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-lg leading-none backdrop-blur-sm">
+        &#8600;
+      </button>
     </div>
 
     <div data-minibar class="absolute inset-x-0 bottom-0 z-20 hidden items-center gap-1 bg-gradient-to-t from-black/95 via-black/70 to-transparent px-2 pb-1 pt-6">
@@ -1630,13 +1676,21 @@ function openPlayer(item, ep = null) {
   `;
 
   const bar = el.querySelector("[data-bar]");
+  const controls = el.querySelector("[data-controls]");
 
   showPlayerBar = (autoHide = true) => {
     if (playerMode === "mini") return; // bilah besar memang tidak dipakai di sana
+
     bar.classList.remove("opacity-0");
+    controls.classList.add("is-awake"); // ikut pekat selagi bilahnya tampak
     clearTimeout(barTimer);
+
     if (autoHide) {
-      barTimer = setTimeout(() => bar.classList.add("opacity-0"), 3000);
+      barTimer = setTimeout(() => {
+        bar.classList.add("opacity-0");
+        // tombolnya tidak ikut hilang, hanya kembali samar
+        controls.classList.remove("is-awake");
+      }, 3000);
     }
   };
 
@@ -1678,15 +1732,27 @@ function setPlayerMode(mode) {
   show("[data-bar]", !mini, "flex");
   show("[data-minibar]", mini, "flex");
 
+  // di jendela sekecil itu tombol keluar tidak muat; minibar punya tombolnya
+  // sendiri yang sudah pas ukurannya
+  show("[data-controls]", !mini, "flex");
+
   if (mini) {
     clearTimeout(barTimer);
+
+    // Layar harus bebas berputar lagi begitu pemutarnya mengecil -- halaman di
+    // baliknya dibaca tegak, dan mengunci mendatar akan menyandera seluruh
+    // situs demi jendela sebesar kartu nama.
+    unlockOrientation();
+
     // keluar dari layar penuh itu wajar di sini; penjaga fullscreenchange di
     // bawah membedakannya dari pengguna yang benar-benar menutup pemutar
     exitFullscreen();
     return;
   }
 
-  requestFullscreen(el);
+  // urutannya penting: Android baru mengizinkan kunci orientasi setelah layar
+  // penuh benar-benar aktif, jadi menunggu janjinya dulu
+  requestFullscreen(el).then(lockLandscape);
   showPlayerBar?.();
 }
 
@@ -1701,6 +1767,10 @@ function closePlayer(fromPopstate = false) {
   clearTimeout(barTimer);
   el.className = "hidden";
   el.innerHTML = ""; // menghapus iframe = playback berhenti
+
+  // dilepas sebelum keluar layar penuh: kalau tidak, halaman bisa tertinggal
+  // terkunci mendatar padahal filmnya sudah tidak ada
+  unlockOrientation();
   exitFullscreen();
 
   playerMode = "full"; // pemutaran berikutnya selalu mulai besar
