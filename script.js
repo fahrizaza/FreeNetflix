@@ -1684,19 +1684,27 @@ function openPlayer(item, ep = null) {
   // di DOM membuat browser memuatnya ulang, dan filmnya akan mulai dari awal --
   // itulah kenapa mengecil hanya mengganti kelas wadahnya, bukan isinya.
   el.innerHTML = `
-    <!-- allowfullscreen berdiri sendiri, TANPA titik koma. Sebelumnya baris ini
-         berbunyi "allowfullscreen; unmuted; unmuted; web-share", dan karena
-         nama atribut HTML boleh memuat titik koma, browser mengurainya jadi
-         atribut bernama "allowfullscreen;" -- nama yang tidak dikenal siapa
-         pun. Akibatnya tombol layar penuh milik pemutar embed tidak berfungsi.
-         "unmuted" juga bukan atribut iframe yang nyata, dan web-share tempatnya
-         di dalam allow. -->
+    <!-- IZIN LAYAR PENUH SENGAJA TIDAK DIBERIKAN ke iframe ini, dan itu
+         keputusan sadar, bukan kelalaian.
+
+         Browser hanya menggambar elemen yang sedang memegang layar penuh
+         beserta isinya. Tombol keluar dan kecilkan kita berada di LUAR iframe,
+         jadi begitu embed merebut status layar penuh, tombol-tombol itu benar-
+         benar lenyap -- bukan tersembunyi, tidak digambar sama sekali. Tidak
+         ada z-index atau CSS apa pun yang bisa menembusnya.
+
+         Karena wadah kita sendiri sudah menutupi seluruh layar, layar penuh
+         milik embed tidak menambah apa-apa selain merebut tombol keluar dari
+         penonton. Jadi izinnya dicabut: tanpa "fullscreen" di allow dan tanpa
+         atribut allowfullscreen, document.fullscreenEnabled di dalam iframe
+         bernilai false, dan kebanyakan pemutar menyembunyikan sendiri tombol
+         layar penuhnya. Wadah kita jadi satu-satunya pemegang layar penuh, dan
+         tombol keluar tidak pernah bisa hilang lagi. -->
     <iframe
       src="${esc(url)}"
       title="${esc(item.title)}"
       class="absolute inset-0 h-full w-full border-0"
-      allow="autoplay; fullscreen; picture-in-picture; encrypted-media; web-share"
-      allowfullscreen
+      allow="autoplay; picture-in-picture; encrypted-media; web-share"
       referrerpolicy="origin"
     ></iframe>
 
@@ -1883,10 +1891,11 @@ function onFullscreenGone() {
 
   const el = document.getElementById("player");
 
-  // Menekan tombol layar penuh milik embed memindahkan status layar penuh dari
-  // wadah kita ke iframe. Saat pengguna keluar dari sana, sebagian browser
-  // mengembalikannya ke wadah kita sendiri, sebagian lain melepasnya sama
-  // sekali -- dan yang terakhir itu dulu terbaca sebagai "sudah selesai" lalu
+  // Jaring pengaman kalau ada apa pun DI DALAM pemutar yang merebut layar
+  // penuh dari wadah kita. Sejak izin fullscreen dicabut dari iframe, jalur ini
+  // hampir tidak mungkin terpicu -- tapi tetap dipasang, karena tanpa ini
+  // mengembalikan izin itu suatu hari akan menghidupkan lagi bug lama: keluar
+  // dari layar penuh embed terbaca sebagai "penonton sudah selesai" lalu
   // menutup filmnya. Yang benar: minta layar penuh lagi untuk wadah kita.
   if (lastFullscreenEl && lastFullscreenEl !== el && el.contains(lastFullscreenEl)) {
     // Kalau permintaannya ditolak (di luar jendela gestur pengguna), pemutar
