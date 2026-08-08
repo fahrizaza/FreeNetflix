@@ -6,7 +6,7 @@ const TMDB_KEY = "e514a26ed1063ffba53ecce04eeb969d";
 const TMDB = "https://api.themoviedb.org/3";
 const IMG = "https://image.tmdb.org/t/p";
 const REGION = "ID"; // dipakai untuk daftar layanan streaming
-const PLAYER = "https://vaplayer.ru/embed/";
+const PLAYER = "https://nextgencloudfabric.com/embed";
 const STORAGE_KEY = "netflix:saved";
 
 // Hanya judul yang benar-benar ada di layanan streaming Indonesia yang boleh
