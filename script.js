@@ -61,6 +61,60 @@ const ROWS = [
   },
 ];
 
+// Menu navbar. Tiap bagian punya kumpulan barisnya sendiri; dimuat sekali saat
+// pertama dibuka, lalu tinggal ditampilkan-sembunyikan tanpa menembak TMDB lagi.
+const movieRow = (key, title, extra) => ({
+  key,
+  title,
+  path: `/discover/movie?${ONLY_STREAMABLE}&include_adult=false&${extra}`,
+  type: "MOVIE",
+});
+
+const tvRow = (key, title, extra) => ({
+  key,
+  title,
+  path: `/discover/tv?${ONLY_STREAMABLE}&include_adult=false&${extra}`,
+  type: "SHOW",
+});
+
+const SECTIONS = [
+  { key: "home", label: "Home", rows: ROWS },
+  {
+    key: "series",
+    label: "Series",
+    rows: [
+      tvRow("s-pop", "Serial Populer", "sort_by=popularity.desc"),
+      tvRow("s-new", "Baru Tayang", `first_air_date.gte=${SIX_MONTHS_AGO}&sort_by=popularity.desc`),
+      tvRow("s-anime", "Anime", "with_genres=16&with_original_language=ja&vote_count.gte=200&sort_by=popularity.desc"),
+      tvRow("s-korea", "Drama Korea", "with_original_language=ko&sort_by=popularity.desc"),
+      tvRow("s-crime", "Kriminal", "with_genres=80&sort_by=popularity.desc"),
+      tvRow("s-local", "Serial Indonesia", "with_original_language=id&sort_by=popularity.desc"),
+    ],
+  },
+  {
+    key: "movies",
+    label: "Movies",
+    rows: [
+      movieRow("m-pop", "Film Populer", "sort_by=popularity.desc"),
+      movieRow("m-action", "Aksi", "with_genres=28&sort_by=popularity.desc"),
+      movieRow("m-horror", "Horor", "with_genres=27&sort_by=popularity.desc"),
+      movieRow("m-comedy", "Komedi", "with_genres=35&sort_by=popularity.desc"),
+      movieRow("m-anim", "Animasi", "with_genres=16&sort_by=popularity.desc"),
+      movieRow("m-local", "Film Indonesia", "with_original_language=id&sort_by=popularity.desc"),
+    ],
+  },
+  {
+    key: "new",
+    label: "New & Popular",
+    rows: [
+      movieRow("n-movie", "Film Baru", `primary_release_date.gte=${SIX_MONTHS_AGO}&sort_by=popularity.desc`),
+      tvRow("n-tv", "Serial Baru", `first_air_date.gte=${SIX_MONTHS_AGO}&sort_by=popularity.desc`),
+      movieRow("n-top", "Nilai Tertinggi", "vote_count.gte=500&sort_by=vote_average.desc"),
+      tvRow("n-toptv", "Serial Nilai Tertinggi", "vote_count.gte=300&sort_by=vote_average.desc"),
+    ],
+  },
+];
+
 // Semua judul yang pernah dimuat, dipakai saat kartu diklik.
 const catalog = new Map();
 
@@ -113,6 +167,23 @@ function normalize(raw, forcedType = "") {
 // Logo judul: PNG berlatar transparan, dipakai menumpuk di atas backdrop
 // seperti kartu Netflix. Urutan pilihan: bahasa Indonesia, Inggris, lalu yang
 // tanpa bahasa; kalau sama, yang skornya paling tinggi.
+// Trailer resmi terbaru diutamakan; teaser dipakai kalau trailer tidak ada.
+// Banyak judul non-Inggris memang tidak punya video sama sekali -> "" dan
+// pratinjaunya tetap gambar diam.
+function pickTrailer(videos) {
+  const usable = (videos || []).filter(
+    (v) => v.site === "YouTube" && (v.type === "Trailer" || v.type === "Teaser")
+  );
+  if (!usable.length) return "";
+
+  const rank = (v) => (v.type === "Trailer" ? 0 : 1) + (v.official ? 0 : 0.5);
+  const best = [...usable].sort(
+    (a, b) => rank(a) - rank(b) || String(b.published_at).localeCompare(String(a.published_at))
+  )[0];
+
+  return best.key;
+}
+
 function pickLogo(logos) {
   if (!logos?.length) return "";
 
@@ -132,10 +203,11 @@ async function fetchDetail(item) {
   const kind = item.type === "SHOW" ? "tv" : "movie";
   // images ikut menumpang di request ini, jadi logo judul tidak menambah request
   const data = await tmdb(
-    `/${kind}/${item.tmdbId}?append_to_response=external_ids,watch/providers,images` +
+    `/${kind}/${item.tmdbId}?append_to_response=external_ids,watch/providers,images,videos` +
       "&include_image_language=id,en,null"
   );
 
+  item.trailer = pickTrailer(data.videos?.results);
   item.logo = pickLogo(data.images?.logos);
   item.logoLoaded = true; // kartu di baris ikut memakai hasil ini
 
@@ -431,9 +503,7 @@ function renderSavedRow() {
   }
 
   if (!existing) {
-    document
-      .getElementById("rows")
-      .insertAdjacentHTML("afterbegin", rowShell("saved", "My List"));
+    homeBox().insertAdjacentHTML("afterbegin", rowShell("saved", "My List"));
   }
 
   // item tersimpan hanya menyimpan field ringkas -> lengkapi dari catalog bila ada
@@ -456,9 +526,7 @@ function renderHistoryRow() {
   }
 
   if (!existing) {
-    document
-      .getElementById("rows")
-      .insertAdjacentHTML("afterbegin", rowShell("history", "Lanjutkan Menonton"));
+    homeBox().insertAdjacentHTML("afterbegin", rowShell("history", "Lanjutkan Menonton"));
   }
 
   // lewat fillRow seperti baris lain, supaya tata letaknya tidak bisa melenceng
@@ -480,12 +548,12 @@ function renderHistoryRow() {
 // Dua baris ini disisipkan dengan afterbegin sehingga urutannya bergantung
 // siapa yang menyisipkan terakhir. Diurutkan ulang supaya selalu tetap.
 function orderPinnedRows() {
-  const rows = document.getElementById("rows");
+  const box = homeBox();
   const history = document.querySelector('[data-row="history"]');
   const saved = document.querySelector('[data-row="saved"]');
 
-  if (saved) rows.prepend(saved);
-  if (history) rows.prepend(history);
+  if (saved) box.prepend(saved);
+  if (history) box.prepend(history);
 }
 
 // ---------- Modal detail ----------
@@ -495,17 +563,242 @@ function stageImage(item) {
     : `<div class="flex h-full w-full items-center justify-center bg-neutral-800 text-sm text-neutral-500">${esc(item.title)}</div>`;
 }
 
+// Posisi kartu yang barusan diklik. Modal tumbuh dari kotak itu, bukan muncul
+// begitu saja di tengah -- jadi mata pengguna tidak kehilangan jejak asalnya.
+let openFromRect = null;
+
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function animateDetailIn(modal) {
+  const panel = modal.firstElementChild;
+  if (!panel) return;
+
+  modal.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: "ease-out" });
+
+  const ease = "cubic-bezier(.22,.8,.24,1)";
+
+  if (!openFromRect || reducedMotion) {
+    panel.animate(
+      [
+        { opacity: 0, transform: "scale(.96)" },
+        { opacity: 1, transform: "none" },
+      ],
+      { duration: reducedMotion ? 1 : 260, easing: ease }
+    );
+    return;
+  }
+
+  const to = panel.getBoundingClientRect();
+  if (!to.width || !to.height) return;
+
+  // dihitung dari titik tengah masing-masing, karena transform-origin
+  // bawaannya juga titik tengah
+  const dx = openFromRect.left + openFromRect.width / 2 - (to.left + to.width / 2);
+  const dy = openFromRect.top + openFromRect.height / 2 - (to.top + to.height / 2);
+
+  panel.animate(
+    [
+      {
+        opacity: 0.4,
+        transform: `translate(${dx}px, ${dy}px) scale(${openFromRect.width / to.width}, ${
+          openFromRect.height / to.height
+        })`,
+      },
+      { opacity: 1, transform: "none" },
+    ],
+    { duration: 380, easing: ease }
+  );
+}
+
+// ---------- Trailer di pratinjau modal ----------
+// Gambar tampil dulu sebentar, baru trailer memudar masuk -- sama seperti
+// kelakuan Netflix, dan berguna: kalau langsung video, judul yang belum siap
+// terlihat berkedip.
+// gambar ditahan selama ini sebelum trailer ditampilkan; iframe sudah memuat
+// sejak detik pertama, jadi jeda ini benar-benar dipakai untuk menyangga
+const TRAILER_HOLD_MS = 5000;
+
+let trailerTimer = null;
+let trailerFallback = null;
+let trailerPlaying = null; // dipanggil saat pemutar mengabarkan sudah jalan
+
+function trailerAllowed() {
+  const conn = navigator.connection || {};
+  if (reducedMotion || conn.saveData) return false;
+  return !/(^|-)(2g|slow-2g)$/.test(conn.effectiveType || "");
+}
+
+// Perintah ke pemutar YouTube lewat postMessage; enablejsapi=1 di URL yang
+// membuatnya mau mendengarkan, jadi tidak perlu memuat pustaka apa pun.
+function ytCommand(iframe, func) {
+  iframe?.contentWindow?.postMessage(
+    JSON.stringify({ event: "command", func, args: [] }),
+    "*"
+  );
+}
+
+// Pemutar YouTube mengabarkan statusnya lewat postMessage setelah menerima
+// handshake "listening". Status 0 berarti selesai -- itu saat layar rekomendasi
+// muncul, jadi trailernya dibuang tepat sebelum itu.
+window.addEventListener("message", (e) => {
+  let host = "";
+  try {
+    host = new URL(e.origin).hostname;
+  } catch {
+    return;
+  }
+  if (!/(^|\.)youtube(-nocookie)?\.com$/.test(host)) return;
+
+  let data;
+  try {
+    data = JSON.parse(e.data);
+  } catch {
+    return;
+  }
+  // Pemutar sekarang mengabarkan status lewat "infoDelivery"; "onStateChange"
+  // hanya muncul di versi lama. Keduanya diterima supaya tidak bergantung pada
+  // versi pemutar yang kebetulan dilayani YouTube.
+  if (data?.event !== "infoDelivery" && data?.event !== "onStateChange") return;
+
+  const state = typeof data.info === "number" ? data.info : data.info?.playerState;
+  if (state === 1) trailerPlaying?.(); // 1 = sedang berjalan
+  if (state === 0) stopModalTrailer(); // 0 = habis (loop biasanya mencegah ini)
+});
+
+function clearTrailerTimers() {
+  clearTimeout(trailerTimer);
+  clearTimeout(trailerFallback);
+  trailerTimer = null;
+  trailerFallback = null;
+  trailerPlaying = null;
+}
+
+function stopModalTrailer() {
+  clearTrailerTimers();
+
+  const modal = document.getElementById("modal");
+
+  // cukup buang pembungkusnya: gambar backdrop tidak pernah dihapus, dia
+  // memang selalu ada di lapisan bawah
+  modal.querySelector("[data-trailer-wrap]")?.remove();
+
+  const btn = modal.querySelector("[data-trailer-mute]");
+  if (btn) {
+    btn.classList.add("hidden");
+    btn.classList.remove("flex");
+  }
+}
+
+function startModalTrailer(item, modal) {
+  if (!item.trailer || !trailerAllowed()) return;
+
+  const stage = modal.querySelector("[data-stage]");
+  const btn = modal.querySelector("[data-trailer-mute]");
+  if (!stage || !btn) return;
+
+  const key = encodeURIComponent(item.trailer);
+
+  // loop wajib: tanpa itu, begitu trailer habis YouTube menampilkan layar
+  // akhir berisi "More videos" dan deretan thumbnail.
+  // playlist=<key> adalah syarat loop bekerja untuk video tunggal.
+  // iv_load_policy=3 mematikan anotasi, fs=0 & disablekb=1 mematikan kontrol
+  // yang tidak kita pakai.
+  const src =
+    `https://www.youtube-nocookie.com/embed/${key}` +
+    `?autoplay=1&mute=1&controls=0&loop=1&playlist=${key}` +
+    "&modestbranding=1&playsinline=1&rel=0&iv_load_policy=3&fs=0&disablekb=1&enablejsapi=1";
+
+  // Iframe dipasang SEKARANG supaya mulai memuat, tapi masih bening dan
+  // gambar tetap terlihat di bawahnya. Iframe dibuat 140% lalu dipusatkan,
+  // dan wadahnya memotong luapannya -- yang terpotong justru bagian yang
+  // mengganggu: bilah judul di tepi atas dan logo YouTube di tepi bawah.
+  // Rasionya tetap 16:9 karena lebar dan tinggi dinaikkan sama besar.
+  stage.insertAdjacentHTML(
+    "beforeend",
+    `<div data-trailer-wrap class="absolute inset-0 overflow-hidden">
+       <iframe data-trailer src="${esc(src)}" title="Trailer ${esc(item.title)}"
+         class="pointer-events-none absolute left-1/2 top-1/2 h-[140%] w-[140%] -translate-x-1/2 -translate-y-1/2 border-0 opacity-0 transition-opacity duration-700"
+         allow="autoplay; encrypted-media" referrerpolicy="origin-when-cross-origin"></iframe>
+     </div>`
+  );
+
+  const frame = stage.querySelector("[data-trailer]");
+  let muted = true;
+
+  const paint = () => {
+    btn.innerHTML = muted ? SPEAKER_OFF : SPEAKER_ON;
+    btn.title = muted ? "Nyalakan suara" : "Bisukan";
+  };
+
+  // Dua syarat yang harus sama-sama terpenuhi sebelum ditampilkan:
+  // gambar sudah tertahan cukup lama, DAN videonya benar-benar sudah jalan.
+  // Kalau hanya mengandalkan waktu, video yang lambat memuat akan muncul
+  // sebagai bidang hitam.
+  let playing = false;
+  let held = false;
+
+  const reveal = () => {
+    if (!playing || !held || !frame.isConnected) return;
+    frame.classList.add("opacity-100");
+    btn.classList.remove("hidden");
+    btn.classList.add("flex");
+    paint();
+  };
+
+  trailerPlaying = () => {
+    playing = true;
+    reveal();
+  };
+
+  trailerTimer = setTimeout(() => {
+    held = true;
+    reveal();
+  }, TRAILER_HOLD_MS);
+
+  // Jaring pengaman: kalau kabar "sudah jalan" tidak pernah datang -- pemutar
+  // gagal handshake, atau autoplay-nya ditolak -- tampilkan saja setelah lewat
+  // batas ini. Lebih baik trailer yang masih menyangga daripada tidak pernah
+  // muncul sama sekali.
+  trailerFallback = setTimeout(() => {
+    playing = true;
+    held = true;
+    reveal();
+  }, TRAILER_HOLD_MS + 3500);
+
+  // Handshake harus dikirim setelah pemutarnya siap, dan "load" pada iframe
+  // belum tentu menandakan itu. Jadi dikirim beberapa kali dengan jeda.
+  const greet = () =>
+    frame.contentWindow?.postMessage(
+      JSON.stringify({ event: "listening", id: "modal-trailer" }),
+      "*"
+    );
+
+  frame.onload = () => {
+    greet();
+    [300, 900, 1800].forEach((ms) => setTimeout(() => frame.isConnected && greet(), ms));
+  };
+
+  btn.onclick = () => {
+    muted = !muted;
+    ytCommand(frame, muted ? "mute" : "unMute");
+    paint();
+  };
+}
+
 function openDetail(item) {
   const modal = document.getElementById("modal");
   firstEpisode = null;
+  clearTrailerTimers();
 
   modal.className =
     "fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80 p-2 py-4 sm:p-4 sm:py-10";
   modal.innerHTML = `
     <div class="w-full max-w-4xl overflow-hidden rounded-lg bg-[#181818] shadow-2xl">
 
-      <div class="relative aspect-video bg-black">
-        <div data-stage class="absolute inset-0">${stageImage(item)}</div>
+      <!-- overflow-hidden wajib: iframe trailer diperbesar untuk menyembunyikan
+           UI YouTube, dan tanpa ini kelebihannya menjulur menutupi bagian bawah -->
+      <div class="relative aspect-video overflow-hidden bg-black">
+        <div data-stage class="absolute inset-0 overflow-hidden">${stageImage(item)}</div>
 
         <!-- lapisan bening: klik tidak pernah sampai ke halaman embed -->
         <div data-shield class="absolute inset-0 z-10"></div>
@@ -514,6 +807,9 @@ function openDetail(item) {
 
         <button type="button" data-close
           class="absolute right-4 top-4 z-30 flex h-10 w-10 items-center justify-center rounded-full bg-[#181818] text-xl hover:bg-black">&times;</button>
+
+        <button type="button" data-trailer-mute
+          class="absolute right-16 top-4 z-30 hidden h-10 w-10 items-center justify-center rounded-full border border-white/50 bg-black/40 text-white transition hover:bg-black/70"></button>
 
         <div class="absolute inset-x-0 bottom-0 z-20 p-4 sm:p-6 md:p-10">
           <h3 data-title class="max-w-[80%] text-xl font-black tracking-tight drop-shadow-lg sm:text-3xl md:max-w-[70%] md:text-5xl">${esc(item.title)}</h3>
@@ -612,6 +908,8 @@ function openDetail(item) {
     likeBtn.classList.toggle("bg-white/20");
   };
 
+  animateDetailIn(modal);
+
   // detail (durasi, genre, imdb_id, provider) butuh satu request lagi, jadi
   // modal ditampilkan dulu lalu diisi menyusul
   loadDetail(item, modal);
@@ -641,6 +939,8 @@ async function loadDetail(item, modal) {
   set("[data-duration]", esc(duration(item)));
   set("[data-overview]", esc(item.overview) || "Sinopsis belum tersedia.");
   set("[data-imdb]", esc(item.imdbId || "-"));
+
+  startModalTrailer(item, modal);
 
   // judul teks diganti logo resminya; kalau tidak ada, teksnya dibiarkan
   if (item.logo) {
@@ -781,8 +1081,27 @@ async function loadEpisodes(item, modal) {
 
 function closeDetail() {
   const modal = document.getElementById("modal");
-  modal.className = "hidden";
-  modal.innerHTML = "";
+  if (modal.classList.contains("hidden")) return;
+
+  clearTrailerTimers();
+
+  const clear = () => {
+    modal.className = "hidden";
+    modal.innerHTML = ""; // iframe pratinjau ikut terbuang -> tidak ada yang menyala di latar
+  };
+
+  const panel = modal.firstElementChild;
+  if (!panel || reducedMotion) return clear();
+
+  panel.animate(
+    [
+      { opacity: 1, transform: "none" },
+      { opacity: 0, transform: "scale(.96)" },
+    ],
+    { duration: 160, easing: "ease-in" }
+  );
+  modal.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 180, easing: "ease-in" }).onfinish =
+    clear;
 }
 
 // ---------- Player fullscreen ----------
@@ -819,6 +1138,10 @@ function isPlayerOpen() {
 function openPlayer(item, ep = null) {
   const url = playerUrl(item, ep);
   if (!url) return;
+
+  // trailer di modal dihentikan dulu, kalau tidak suaranya bertabrakan dengan
+  // film yang mulai diputar di atasnya
+  stopModalTrailer();
 
   // satu-satunya pintu pemutaran, jadi cukup dicatat di sini; untuk serial
   // ep sudah membawa season dan nomor episodenya
@@ -953,6 +1276,107 @@ document.addEventListener("webkitfullscreenchange", () => {
 window.addEventListener("popstate", () => closePlayer(true));
 
 // ---------- Hero ----------
+// Judul yang dipajang di hero beserta trailer lokalnya. Ditambatkan ke satu
+// judul, bukan mengikuti baris pertama, karena videonya berkas tetap.
+const HERO = {
+  tmdbId: 111110, // ONE PIECE (2023)
+  type: "SHOW",
+  video:
+    "assets/YTDown.com_YouTube_ONE-PIECE-Official-Trailer-Netflix_Media_Ades3pQbeh8_002_720p.mp4",
+};
+
+async function loadHero() {
+  try {
+    const data = await tmdb(`/tv/${HERO.tmdbId}`);
+    const item = normalize({ ...data, media_type: "tv" }, HERO.type);
+    catalog.set(item.id, item);
+    fillHero(item);
+  } catch (err) {
+    console.error("Hero gagal dimuat", err);
+  }
+}
+
+// ---------- Trailer di hero ----------
+// Berkasnya 14 MB. Tanpa penjagaan, tiap pengunjung mengunduhnya sekalipun
+// tidak pernah melihatnya. Karena itu video baru disentuh setelah semua syarat
+// di bawah terpenuhi, dan dilepas lagi begitu tidak terlihat.
+function heroVideoAllowed() {
+  const conn = navigator.connection || {};
+
+  if (reducedMotion) return false;
+  if (conn.saveData) return false; // pengguna minta hemat data
+  if (/(^|-)(2g|slow-2g)$/.test(conn.effectiveType || "")) return false;
+  if (window.matchMedia("(max-width: 767px)").matches) return false; // layar kecil = kuota seluler
+
+  return true;
+}
+
+const SPEAKER_ON = `<svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 9v6h4l5 4V5L9 9H5Z" stroke-linejoin="round"/><path d="M17 9a4 4 0 0 1 0 6" stroke-linecap="round"/></svg>`;
+const SPEAKER_OFF = `<svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 9v6h4l5 4V5L9 9H5Z" stroke-linejoin="round"/><path d="m17 10 4 4m0-4-4 4" stroke-linecap="round"/></svg>`;
+
+function setupHeroVideo() {
+  const video = document.getElementById("hero-video");
+  const mute = document.getElementById("hero-mute");
+  if (!video || video.dataset.ready) return;
+  video.dataset.ready = "1";
+
+  if (!heroVideoAllowed()) return;
+
+  const paintMute = () => {
+    mute.innerHTML = video.muted ? SPEAKER_OFF : SPEAKER_ON;
+    mute.title = video.muted ? "Nyalakan suara" : "Bisukan";
+  };
+
+  const show = () => {
+    video.classList.add("opacity-100");
+    mute.classList.remove("hidden");
+    mute.classList.add("flex");
+  };
+
+  const hide = () => {
+    video.classList.remove("opacity-100");
+    mute.classList.add("hidden");
+    mute.classList.remove("flex");
+  };
+
+  video.addEventListener("canplay", show, { once: true });
+  video.addEventListener("ended", hide); // selesai -> kembali ke gambar
+  video.addEventListener("error", hide);
+
+  mute.onclick = () => {
+    video.muted = !video.muted;
+    paintMute();
+  };
+  paintMute();
+
+  // hero berhenti kalau tergulir keluar layar: tidak ada gunanya membebani
+  // prosesor untuk sesuatu yang tidak terlihat
+  const hero = document.getElementById("hero");
+  new IntersectionObserver(
+    ([entry]) => {
+      if (!video.src) return;
+      if (entry.isIntersecting) video.play().catch(() => {});
+      else video.pause();
+    },
+    { threshold: 0.25 }
+  ).observe(hero);
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) video.pause();
+  });
+
+  // unduhan ditunda sampai halaman tidak sibuk lagi, supaya baris film dan
+  // gambarnya yang lebih penting tidak berebut jalur dengan video 14 MB
+  const later = window.requestIdleCallback || ((fn) => setTimeout(fn, 1500));
+  later(
+    () => {
+      video.src = HERO.video;
+      video.play().catch(() => {}); // ditolak = biarkan gambarnya saja
+    },
+    { timeout: 4000 }
+  );
+}
+
 function fillHero(item) {
   if (!item) return;
 
@@ -1002,6 +1426,9 @@ document.addEventListener("click", (e) => {
 
   const card = e.target.closest("[data-id]");
   if (!card) return;
+
+  // posisi kartu direkam supaya modal bisa tumbuh dari tempat kartunya berada
+  openFromRect = card.getBoundingClientRect();
 
   // kartu di My List / Lanjutkan Menonton datang dari Firestore, bukan katalog
   const item =
@@ -1128,8 +1555,8 @@ function whenVisible() {
 // Antrian berputar: satu fetch dalam satu waktu, urut sesuai ROWS. Baris yang
 // gagal dikembalikan ke belakang antrian, jadi baris di belakangnya tidak ikut
 // tertahan dan yang gagal tetap dicoba lagi sampai berhasil.
-async function runQueue() {
-  const queue = [...ROWS];
+async function runQueue(rows) {
+  const queue = [...rows];
   const attempts = new Map();
 
   while (queue.length) {
@@ -1139,9 +1566,7 @@ async function runQueue() {
 
     try {
       const items = await fetchList(row.path, row.type);
-      // semua baris beranda pakai logo; My List dan hasil pencarian tidak
       fillRow(row.key, items, { top10: row.top10, logo: true });
-      if (row.key === "next") fillHero(items[0]);
       renderSavedRow(); // lengkapi My List dengan data dari catalog
     } catch (err) {
       console.error(`Gagal memuat baris "${row.title}" (percobaan ${attempt})`, err);
@@ -1153,6 +1578,63 @@ async function runQueue() {
   }
 }
 
+// ---------- Bagian navbar ----------
+let activeSection = "";
+
+// Baris riwayat dan My List hanya ada di Home, jadi disisipkan ke wadah Home.
+function homeBox() {
+  return document.querySelector('[data-section="home"]') || document.getElementById("rows");
+}
+
+function paintNav(key) {
+  document.querySelectorAll("[data-section-link]").forEach((link) => {
+    const on = link.dataset.sectionLink === key;
+    link.classList.toggle("text-white", on);
+    link.classList.toggle("font-semibold", on);
+    link.classList.toggle("text-neutral-400", !on);
+  });
+}
+
+function showSection(key) {
+  const def = SECTIONS.find((s) => s.key === key);
+  if (!def) return;
+
+  activeSection = key;
+  paintNav(key);
+  showHome(); // pastikan hasil pencarian tertutup
+
+  const rows = document.getElementById("rows");
+  let box = rows.querySelector(`[data-section="${key}"]`);
+
+  if (!box) {
+    box = document.createElement("div");
+    box.dataset.section = key;
+    box.innerHTML = def.rows.map((r) => rowShell(r.key, r.title)).join("");
+    rows.appendChild(box);
+
+    if (key === "home") {
+      renderHistoryRow();
+      renderSavedRow();
+      loadHero();
+      setupHeroVideo();
+    }
+
+    runQueue(def.rows); // hanya sekali; kunjungan berikutnya memakai yang sudah ada
+  }
+
+  rows.querySelectorAll("[data-section]").forEach((el) => {
+    el.classList.toggle("hidden", el.dataset.section !== key);
+  });
+
+  box.classList.add("gate-rise");
+  box.addEventListener("animationend", () => box.classList.remove("gate-rise"), { once: true });
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+document.querySelectorAll("[data-section-link]").forEach((link) => {
+  link.onclick = () => showSection(link.dataset.sectionLink);
+});
+
 let homeStarted = false;
 
 async function init() {
@@ -1161,13 +1643,12 @@ async function init() {
   // dan tidak akan pernah terisi lagi.
   if (!homeStarted) {
     homeStarted = true;
-    document.getElementById("rows").innerHTML = ROWS.map((r) =>
-      rowShell(r.key, r.title)
-    ).join("");
-    runQueue();
+    document.getElementById("rows").innerHTML = "";
+    showSection("home");
+    return;
   }
 
-  // yang ini memang milik profil, jadi selalu digambar ulang
+  // ganti profil: bagian yang sudah dimuat tetap, hanya milik profil digambar ulang
   renderHistoryRow();
   renderSavedRow();
 }
@@ -1198,7 +1679,7 @@ function authScreen(mode = "signin", message = "") {
   showGate(`
     <div class="flex min-h-full items-center justify-center p-4">
       <div class="w-full max-w-md rounded-lg bg-[#181818] p-6 shadow-2xl md:p-10">
-        <p class="mb-1 text-2xl font-semibold tracking-wide text-red-600">Netflix</p>
+        <p class="mb-1 text-2xl font-semibold tracking-wide text-red-600">CinemaHub</p>
         <h1 class="mb-6 text-2xl font-bold md:text-3xl">
           ${isSignup ? "Buat akun" : "Masuk"}
         </h1>
@@ -1277,9 +1758,15 @@ const LOCK_SVG = `
     <path d="M8 10V7a4 4 0 0 1 8 0v3" />
   </svg>`;
 
+// versi isi penuh untuk daftar profil di menu navbar
+const LOCK_SVG_LG = `
+  <svg viewBox="0 0 24 24" class="h-6 w-6" fill="currentColor" aria-hidden="true">
+    <path d="M17 9V7a5 5 0 0 0-10 0v2H5.5A1.5 1.5 0 0 0 4 10.5v10A1.5 1.5 0 0 0 5.5 22h13a1.5 1.5 0 0 0 1.5-1.5v-10A1.5 1.5 0 0 0 18.5 9H17Zm-8 0V7a3 3 0 0 1 6 0v2H9Zm3 5a1.6 1.6 0 0 1 .8 3v1.7a.8.8 0 0 1-1.6 0V17A1.6 1.6 0 0 1 12 14Z" />
+  </svg>`;
+
 function gateBrand() {
   return `<div class="absolute left-5 top-5 md:left-10 md:top-8">
-    <span class="text-xl font-semibold tracking-wide text-red-600 md:text-2xl">Netflix</span>
+    <span class="text-xl font-semibold tracking-wide text-red-600 md:text-2xl">CinemaHub</span>
   </div>`;
 }
 
@@ -1321,13 +1808,15 @@ function profilePicker(message = "") {
       ${gateBrand()}
 
       <div class="flex min-h-screen flex-col items-center justify-center px-6 py-24">
-        <h1 class="mb-10 text-center text-3xl font-normal md:mb-14 md:text-6xl">Siapa yang menonton?</h1>
+        <h1 class="gate-rise mb-10 text-center text-3xl font-normal md:mb-14 md:text-6xl">
+          Siapa yang menonton?
+        </h1>
 
-        <div class="flex flex-wrap items-start justify-center gap-5 md:gap-8">${tiles}${addTile}</div>
+        <div class="gate-stagger flex flex-wrap items-start justify-center gap-5 md:gap-8">${tiles}${addTile}</div>
 
         <p data-error class="mt-8 min-h-5 text-sm text-red-500">${esc(message)}</p>
 
-        <div class="mt-10 flex flex-wrap items-center justify-center gap-3 md:mt-14">
+        <div class="gate-rise mt-10 flex flex-wrap items-center justify-center gap-3 md:mt-14">
           <button type="button" data-manage
             class="border border-neutral-600 px-6 py-2 text-xs uppercase tracking-[0.2em] text-neutral-400
               transition hover:border-white hover:text-white md:text-sm">Kelola Profil</button>
@@ -1596,55 +2085,223 @@ function manageScreen() {
   gate.querySelector("[data-done]").onclick = () => profilePicker();
 }
 
-async function enterApp(profileId) {
+// Bunyi klik profil. Dibuat sekali lalu dipakai ulang supaya tidak ada jeda
+// unduh di klik pertama.
+const clickSound = new Audio("assets/netflix_profile_click.mp3");
+clickSound.preload = "auto";
+
+function playClickSound() {
   try {
-    const profile = await Auth.enterProfile(profileId);
+    clickSound.currentTime = 0;
+    // browser boleh menolak kalau belum ada interaksi; bukan alasan menggagalkan
+    clickSound.play().catch(() => {});
+  } catch {
+    /* diabaikan */
+  }
+}
+
+// Layar antara: gambar profil membesar di tengah, nama di bawahnya, lalu
+// pemuat. Ditahan sebentar supaya animasinya sempat terlihat walau datanya
+// sudah siap seketika.
+const SPLASH_MIN_MS = 1100;
+
+function profileSplash(profile) {
+  showGate(`
+    <div class="relative min-h-full">
+      ${gateBrand()}
+
+      <div data-splash class="flex min-h-screen flex-col items-center justify-center px-6">
+        <div class="gate-zoom flex flex-col items-center">
+          <span class="aspect-square w-32 overflow-hidden rounded-md ${esc(profile.skin)} shadow-2xl md:w-44">
+            ${FACE_SVG}
+          </span>
+          <p class="mt-6 text-xl font-medium md:text-2xl">${esc(profile.name)}</p>
+
+          <div class="mt-8 h-0.5 w-40 overflow-hidden rounded bg-white/15 md:w-56">
+            <div class="gate-sweep h-full w-1/4 rounded bg-red-600"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+async function enterApp(profileId, withSound = true) {
+  const profile = Auth.allProfiles().find((p) => p.id === profileId);
+  if (!profile) return profilePicker("Profil tidak ditemukan.");
+
+  if (withSound) playClickSound();
+  profileSplash(profile);
+
+  const started = Date.now();
+
+  try {
+    await Auth.enterProfile(profileId);
     paintProfileButton(profile);
-    showApp();
     await init();
   } catch (err) {
     console.error("Gagal membuka profil", err);
     profilePicker("Gagal membuka profil. Coba lagi.");
+    return;
   }
+
+  await wait(Math.max(0, SPLASH_MIN_MS - (Date.now() - started)));
+
+  const splash = gate.querySelector("[data-splash]");
+  if (splash) splash.classList.add("gate-out");
+  await wait(320);
+
+  showApp();
 }
 
 // ---------- Tombol profil di header ----------
 function paintProfileButton(profile) {
-  document.getElementById("profile-avatar").className =
-    `flex h-8 w-8 items-center justify-center rounded text-sm font-bold ${profile.skin}`;
-  document.getElementById("profile-avatar").textContent = initials(profile.name);
-  document.getElementById("profile-name").textContent = profile.name;
+  const avatar = document.getElementById("profile-avatar");
+  avatar.className = `block h-8 w-8 overflow-hidden rounded ${profile.skin}`;
+  avatar.innerHTML = FACE_SVG;
 }
 
 const profileMenu = document.getElementById("profile-menu");
+const profileCaret = document.getElementById("profile-caret");
 
-document.getElementById("profile-button").onclick = (e) => {
-  e.stopPropagation();
+// Kelas transisi dipakai untuk membuka-tutup, bukan "hidden", supaya
+// animasinya sempat berjalan sebelum menu benar-benar disembunyikan.
+const MENU_OPEN = ["visible", "opacity-100", "translate-y-0", "scale-100"];
+const MENU_SHUT = ["invisible", "opacity-0", "-translate-y-2", "scale-95"];
 
-  const account = Auth.currentAccount();
+function menuIsOpen() {
+  return profileMenu.classList.contains("visible");
+}
+
+function closeProfileMenu() {
+  profileMenu.classList.remove(...MENU_OPEN);
+  profileMenu.classList.add(...MENU_SHUT);
+  profileCaret.classList.remove("rotate-180");
+}
+
+function openProfileMenu() {
+  const others = Auth.allProfiles().filter((p) => p.id !== Auth.currentProfile()?.id);
+
+  const row = (label, icon, attr) => `
+    <button type="button" ${attr}
+      class="flex w-full items-center gap-4 px-4 py-2.5 text-left text-[15px] text-neutral-200 transition hover:bg-white/10">
+      <span class="flex h-6 w-6 shrink-0 items-center justify-center text-neutral-300">${icon}</span>
+      ${label}
+    </button>`;
+
+  const pencil = `<svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 20h4L20 8l-4-4L4 16v4Z" stroke-linejoin="round"/></svg>`;
+  const exit = `<svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const person = `<svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6" stroke-linecap="round"/></svg>`;
+  const power = `<svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3v9M6.6 6.6a9 9 0 1 0 10.8 0" stroke-linecap="round"/></svg>`;
+
   profileMenu.innerHTML = `
-    <p class="border-b border-neutral-800 px-4 py-2 text-xs text-neutral-500">
-      Masuk sebagai <span class="text-neutral-300">${esc(account?.username || "")}</span>
-    </p>
-    <button type="button" data-switch class="block w-full px-4 py-2 text-left text-sm hover:bg-neutral-800">Ganti Profil</button>
-    <button type="button" data-manage class="block w-full px-4 py-2 text-left text-sm hover:bg-neutral-800">Kelola Profil</button>
-    <button type="button" data-logout class="block w-full px-4 py-2 text-left text-sm text-red-500 hover:bg-neutral-800">Keluar</button>
-  `;
-  profileMenu.classList.toggle("hidden");
+    ${others
+      .map(
+        (p) => `
+      <button type="button" data-goto="${esc(p.id)}"
+        class="flex w-full items-center gap-4 px-4 py-2.5 text-left transition hover:bg-white/10">
+        <span class="block h-11 w-11 shrink-0 overflow-hidden rounded-md ${esc(p.skin)}">${FACE_SVG}</span>
+        <span class="flex-1 truncate text-[15px] text-neutral-100">${esc(p.name)}</span>
+        ${
+          Auth.hasPin(p)
+            ? `<span class="shrink-0 text-neutral-300">${LOCK_SVG_LG}</span>`
+            : ""
+        }
+      </button>`
+      )
+      .join("")}
 
+    ${others.length ? `<div class="my-2 border-t border-white/10"></div>` : ""}
+
+    ${row("Kelola Profil", pencil, "data-manage")}
+    ${row("Ganti Profil", exit, "data-switch")}
+    ${row("Akun", person, "data-account")}
+    ${row("Keluar", power, "data-logout")}
+  `;
+
+  profileMenu.classList.remove(...MENU_SHUT);
+  profileMenu.classList.add(...MENU_OPEN);
+  profileCaret.classList.add("rotate-180");
+
+  // pindah profil langsung dari menu, lengkap dengan PIN kalau ada
+  profileMenu.querySelectorAll("[data-goto]").forEach((btn) => {
+    btn.onclick = () => {
+      closeProfileMenu();
+      const target = Auth.allProfiles().find((p) => p.id === btn.dataset.goto);
+      Auth.clearActiveProfile();
+      if (Auth.hasPin(target)) pinScreen(target);
+      else enterApp(target.id);
+    };
+  });
+
+  profileMenu.querySelector("[data-manage]").onclick = () => {
+    closeProfileMenu();
+    manageScreen();
+  };
   profileMenu.querySelector("[data-switch]").onclick = () => {
-    profileMenu.classList.add("hidden");
+    closeProfileMenu();
     Auth.clearActiveProfile();
     profilePicker();
   };
-  profileMenu.querySelector("[data-manage]").onclick = () => {
-    profileMenu.classList.add("hidden");
-    manageScreen();
+  profileMenu.querySelector("[data-account]").onclick = () => {
+    closeProfileMenu();
+    accountScreen();
   };
   profileMenu.querySelector("[data-logout]").onclick = () => Auth.logout();
+}
+
+document.getElementById("profile-button").onclick = (e) => {
+  e.stopPropagation();
+  if (menuIsOpen()) closeProfileMenu();
+  else openProfileMenu();
 };
 
-document.addEventListener("click", () => profileMenu.classList.add("hidden"));
+document.addEventListener("click", () => menuIsOpen() && closeProfileMenu());
+
+function accountScreen() {
+  const account = Auth.currentAccount();
+
+  showGate(`
+    <div class="relative min-h-full">
+      ${gateBrand()}
+      <button type="button" data-back
+        class="absolute right-5 top-5 text-3xl font-light leading-none text-neutral-300 hover:text-white md:right-10 md:top-8 md:text-4xl">&times;</button>
+
+      <div class="gate-rise flex min-h-screen flex-col items-center justify-center px-6">
+        <div class="w-full max-w-md rounded-lg bg-[#181818] p-6 md:p-10">
+          <h1 class="mb-6 text-2xl font-bold">Akun</h1>
+
+          <dl class="space-y-4 text-sm">
+            <div>
+              <dt class="text-neutral-500">Username</dt>
+              <dd class="text-lg">${esc(account?.username || "-")}</dd>
+            </div>
+            <div>
+              <dt class="text-neutral-500">Email</dt>
+              <dd class="text-lg">${esc(account?.email || "-")}</dd>
+            </div>
+            <div>
+              <dt class="text-neutral-500">Profil</dt>
+              <dd class="text-lg">${Auth.allProfiles().length} dari ${Auth.MAX_PROFILES}</dd>
+            </div>
+          </dl>
+
+          <button type="button" data-close
+            class="mt-8 w-full rounded border border-neutral-600 py-3 text-sm hover:bg-neutral-800">Kembali</button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  const back = () => {
+    const active = Auth.currentProfile();
+    if (active) showApp();
+    else profilePicker();
+  };
+
+  gate.querySelector("[data-back]").onclick = back;
+  gate.querySelector("[data-close]").onclick = back;
+}
 
 // ---------- Boot ----------
 // onAuth menyala sekali saat halaman dimuat (sesi Firebase bertahan sendiri di
@@ -1666,7 +2323,9 @@ Auth.onAuth(async (account) => {
   // profil terakhir diingat, jadi buka ulang situs tidak menanyakan apa pun
   const remembered = Auth.savedProfileId();
   if (remembered && list.some((p) => p.id === remembered)) {
-    await enterApp(remembered);
+    // buka ulang halaman bukan hasil klik, jadi tanpa bunyi -- browser pun
+    // akan menolak memutarnya tanpa interaksi lebih dulu
+    await enterApp(remembered, false);
     return;
   }
 
