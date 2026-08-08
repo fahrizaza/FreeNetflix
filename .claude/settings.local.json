@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx @tailwindcss/cli -i ./src/input.css -o ./src/output.css)",
+      "Bash(node -e \"new Function\\(require\\('fs'\\).readFileSync\\('script.js','utf8'\\)\\); console.log\\('syntax OK'\\)\")",
+      "Bash(curl -s \"https://streamimdb.ru/embed/movie/tt15398776?autoplay=1&quality=1080\")",
+      "Bash(curl -s \"https://streamimdb.ru/embed/movie/tt15398776?res=1080p&q=hd\")",
+      "Bash(node -e ' *)",
+      "Bash(curl -s -o /dev/null -w 'tanpa Origin        : HTTP %{http_code}\\\\n' https://imdb.iamidiotareyoutoo.com/justwatch?q=avatar)",
+      "Bash(curl -s -o /dev/null -w 'Origin netlify.app  : HTTP %{http_code}\\\\n' -H 'Origin: https://situskamu.netlify.app' https://imdb.iamidiotareyoutoo.com/justwatch?q=avatar)",
+      "Bash(curl -s -D - -o /dev/null -H 'Origin: https://situskamu.netlify.app' https://imdb.iamidiotareyoutoo.com/justwatch?q=avatar)",
+      "Bash(curl -s -D - -o /dev/null -H \"Origin: https://situskamu.netlify.app\" \"https://api.tvmaze.com/lookup/shows?imdb=tt4574334\")"
+    ]
+  }
+}
