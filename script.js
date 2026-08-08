@@ -1,5 +1,7 @@
 // TMDB dipakai karena mengirim header CORS "*", jadi bisa dipanggil langsung
 // dari browser di domain mana pun -- tidak perlu proxy seperti API sebelumnya.
+import * as Auth from "./auth.js";
+
 const TMDB_KEY = "e514a26ed1063ffba53ecce04eeb969d";
 const TMDB = "https://api.themoviedb.org/3";
 const IMG = "https://image.tmdb.org/t/p";
@@ -161,46 +163,26 @@ async function fetchDetail(item) {
   return item;
 }
 
-// ---------- Penyimpanan id ----------
-function loadSaved() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
-  } catch {
-    return {};
-  }
-}
-
-function persist(saved) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+// ---------- Penyimpanan ----------
+// isSaved / savedItems / historyItems dibaca dari salinan memori di auth.js,
+// jadi tetap bisa dipanggil langsung saat menggambar kartu. Tulisannya ke
+// Firestore berjalan di belakang.
+function saveToggle(item) {
+  const nowSaved = Auth.toggleSaved(item);
+  renderSavedRow();
+  return nowSaved;
 }
 
 function isSaved(id) {
-  return Boolean(loadSaved()[id]);
+  return Auth.isSaved(id);
 }
 
-function toggleSaved(item) {
-  const saved = loadSaved();
+function savedById(id) {
+  return Auth.savedItems().find((entry) => entry.id === id) || null;
+}
 
-  if (saved[item.id]) {
-    delete saved[item.id];
-  } else {
-    // id JustWatch + id IMDb disimpan supaya bisa dipakai lagi tanpa search ulang
-    saved[item.id] = {
-      id: item.id,
-      imdbId: item.imdbId,
-      tmdbId: item.tmdbId,
-      title: item.title,
-      year: item.year,
-      type: item.type,
-      backdrop: item.backdrop,
-      poster: item.poster,
-      savedAt: new Date().toISOString(),
-    };
-  }
-
-  persist(saved);
-  renderSavedRow();
-  return Boolean(saved[item.id]);
+function historyById(id) {
+  return Auth.historyItems().find((entry) => entry.id === id) || null;
 }
 
 // ---------- Util ----------
@@ -271,7 +253,12 @@ async function fetchSeason(tmdbId, season) {
 
 // ---------- Kartu ----------
 function cardTemplate(item, opts = {}) {
-  const { top10 = false, logo = false, index = 0, grid = false } = opts;
+  const { top10 = false, logo = false, index = 0, grid = false, badge = "" } = opts;
+
+  // dipakai baris "Lanjutkan Menonton" untuk menandai episode terakhir
+  const epBadge = badge
+    ? `<span class="absolute bottom-1.5 left-1.5 z-10 rounded bg-black/80 px-1.5 py-0.5 text-[10px] font-bold">${esc(badge)}</span>`
+    : "";
 
   // di grid kartunya mengikuti lebar kolom; di baris geser lebarnya tetap
   const size = grid
@@ -303,6 +290,7 @@ function cardTemplate(item, opts = {}) {
         ${top10Badge}
         ${netflix}
         ${image}
+        ${epBadge}
         ${logoSlot}
         <div class="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent opacity-0 transition duration-300 group-hover/card:opacity-100"></div>
         <div class="absolute inset-x-0 bottom-0 translate-y-2 p-3 opacity-0 transition duration-300 group-hover/card:translate-y-0 group-hover/card:opacity-100">
@@ -328,9 +316,13 @@ function rowShell(key, title) {
         class="absolute left-0 top-1/2 z-20 hidden h-24 w-8 -translate-y-1/2 items-center justify-center rounded-r-md bg-black/60 text-2xl opacity-0 transition group-hover/row:opacity-100 md:flex">&#8249;</button>
 
       <!-- py memberi ruang untuk kartu yang membesar saat hover; tanpa itu
-           bagian atas-bawahnya terpotong karena overflow-x ikut memotong -->
+           bagian atas-bawahnya terpotong karena overflow-x ikut memotong.
+           scroll-pl wajib sepadan dengan px: snap-start menempel ke tepi
+           scroll-port yang mengabaikan padding, jadi tanpa ini kartu pertama
+           bergeser masuk begitu barisnya ter-snap dan tidak lagi sejajar
+           dengan judul maupun baris yang isinya sedikit. -->
       <div data-track
-        class="flex snap-x snap-mandatory gap-2 overflow-x-auto scroll-smooth px-4 py-3 md:px-8 md:py-5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        class="flex snap-x snap-mandatory gap-2 overflow-x-auto scroll-smooth scroll-pl-4 px-4 py-3 md:scroll-pl-8 md:px-8 md:py-5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         ${skeletonCard().repeat(6)}
       </div>
 
@@ -416,7 +408,12 @@ function fillRow(key, items, opts = {}) {
 
   track.innerHTML = items
     .map((item, i) =>
-      cardTemplate(item, { top10: opts.top10 && i < 3, logo: opts.logo, index: i })
+      cardTemplate(item, {
+        top10: opts.top10 && i < 3,
+        logo: opts.logo,
+        index: i,
+        badge: opts.badgeOf ? opts.badgeOf(item) : "",
+      })
     )
     .join("");
 
@@ -425,9 +422,7 @@ function fillRow(key, items, opts = {}) {
 
 // ---------- Baris "My List" (dari id yang disimpan) ----------
 function renderSavedRow() {
-  const items = Object.values(loadSaved()).sort((a, b) =>
-    b.savedAt.localeCompare(a.savedAt)
-  );
+  const items = Auth.savedItems();
   const existing = document.querySelector('[data-row="saved"]');
 
   if (!items.length) {
@@ -446,6 +441,51 @@ function renderSavedRow() {
     "saved",
     items.map((s) => catalog.get(s.id) || { ...s, providers: [], rating: null })
   );
+
+  orderPinnedRows();
+}
+
+// ---------- Baris "Lanjutkan Menonton" (dari riwayat) ----------
+function renderHistoryRow() {
+  const items = Auth.historyItems();
+  const existing = document.querySelector('[data-row="history"]');
+
+  if (!items.length) {
+    existing?.remove();
+    return;
+  }
+
+  if (!existing) {
+    document
+      .getElementById("rows")
+      .insertAdjacentHTML("afterbegin", rowShell("history", "Lanjutkan Menonton"));
+  }
+
+  // lewat fillRow seperti baris lain, supaya tata letaknya tidak bisa melenceng
+  fillRow(
+    "history",
+    items.map((entry) => ({
+      ...(catalog.get(entry.id) || entry),
+      providers: [],
+      rating: null,
+      // penanda episode terakhir, dibaca lagi oleh badgeOf di bawah
+      lastEp: entry.type === "SHOW" && entry.season ? `S${entry.season}:E${entry.episode}` : "",
+    })),
+    { logo: true, badgeOf: (item) => item.lastEp }
+  );
+
+  orderPinnedRows();
+}
+
+// Dua baris ini disisipkan dengan afterbegin sehingga urutannya bergantung
+// siapa yang menyisipkan terakhir. Diurutkan ulang supaya selalu tetap.
+function orderPinnedRows() {
+  const rows = document.getElementById("rows");
+  const history = document.querySelector('[data-row="history"]');
+  const saved = document.querySelector('[data-row="saved"]');
+
+  if (saved) rows.prepend(saved);
+  if (history) rows.prepend(history);
 }
 
 // ---------- Modal detail ----------
@@ -563,7 +603,7 @@ function openDetail(item) {
 
   paintSave();
   saveBtn.onclick = () => {
-    toggleSaved(item);
+    saveToggle(item);
     paintSave();
   };
 
@@ -780,6 +820,11 @@ function openPlayer(item, ep = null) {
   const url = playerUrl(item, ep);
   if (!url) return;
 
+  // satu-satunya pintu pemutaran, jadi cukup dicatat di sini; untuk serial
+  // ep sudah membawa season dan nomor episodenya
+  Auth.recordPlay(item, ep);
+  renderHistoryRow();
+
   const el = document.getElementById("player");
   el.className = "fixed inset-0 z-[60] bg-black";
   el.innerHTML = `
@@ -958,8 +1003,9 @@ document.addEventListener("click", (e) => {
   const card = e.target.closest("[data-id]");
   if (!card) return;
 
-  // kartu di baris "My List" bisa berasal dari localStorage, bukan dari hasil search
-  const item = catalog.get(card.dataset.id) || loadSaved()[card.dataset.id];
+  // kartu di My List / Lanjutkan Menonton datang dari Firestore, bukan katalog
+  const item =
+    catalog.get(card.dataset.id) || savedById(card.dataset.id) || historyById(card.dataset.id);
   if (item) openDetail({ providers: [], rating: null, runtime: 0, ...item });
 });
 
@@ -1107,12 +1153,522 @@ async function runQueue() {
   }
 }
 
-async function init() {
-  const rows = document.getElementById("rows");
-  rows.innerHTML = ROWS.map((r) => rowShell(r.key, r.title)).join("");
-  renderSavedRow();
+let homeStarted = false;
 
-  runQueue();
+async function init() {
+  // Baris TMDB dibangun sekali saja. Menggambar ulang saat ganti profil akan
+  // mengembalikan semuanya jadi skeleton padahal antriannya sudah selesai --
+  // dan tidak akan pernah terisi lagi.
+  if (!homeStarted) {
+    homeStarted = true;
+    document.getElementById("rows").innerHTML = ROWS.map((r) =>
+      rowShell(r.key, r.title)
+    ).join("");
+    runQueue();
+  }
+
+  // yang ini memang milik profil, jadi selalu digambar ulang
+  renderHistoryRow();
+  renderSavedRow();
 }
 
-init();
+// ---------- Gerbang: daftar, masuk, pilih profil ----------
+const gate = document.getElementById("gate");
+const appEl = document.getElementById("app");
+
+function showGate(html) {
+  gate.innerHTML = html;
+  gate.classList.remove("hidden");
+  appEl.classList.add("hidden");
+}
+
+function showApp() {
+  gate.classList.add("hidden");
+  gate.innerHTML = "";
+  appEl.classList.remove("hidden");
+}
+
+const FIELD =
+  "w-full rounded border border-neutral-700 bg-neutral-900 px-4 py-3 text-sm outline-none " +
+  "placeholder:text-neutral-500 focus:border-neutral-400";
+
+function authScreen(mode = "signin", message = "") {
+  const isSignup = mode === "signup";
+
+  showGate(`
+    <div class="flex min-h-full items-center justify-center p-4">
+      <div class="w-full max-w-md rounded-lg bg-[#181818] p-6 shadow-2xl md:p-10">
+        <p class="mb-1 text-2xl font-semibold tracking-wide text-red-600">Netflix</p>
+        <h1 class="mb-6 text-2xl font-bold md:text-3xl">
+          ${isSignup ? "Buat akun" : "Masuk"}
+        </h1>
+
+        <form data-form class="space-y-3">
+          <input data-username class="${FIELD}" placeholder="Username" autocomplete="username" />
+          ${
+            isSignup
+              ? `<input data-email type="email" class="${FIELD}" placeholder="Email (gmail)" autocomplete="email" />`
+              : ""
+          }
+          <input data-password type="password" class="${FIELD}" placeholder="Password"
+            autocomplete="${isSignup ? "new-password" : "current-password"}" />
+
+          <p data-error class="min-h-5 text-sm text-red-500">${esc(message)}</p>
+
+          <button data-submit type="submit"
+            class="w-full rounded bg-red-600 py-3 font-semibold hover:bg-red-500 disabled:opacity-50">
+            ${isSignup ? "Daftar" : "Masuk"}
+          </button>
+        </form>
+
+        <p class="mt-6 text-sm text-neutral-400">
+          ${isSignup ? "Sudah punya akun?" : "Belum punya akun?"}
+          <button data-switch type="button" class="font-semibold text-white hover:underline">
+            ${isSignup ? "Masuk" : "Daftar sekarang"}
+          </button>
+        </p>
+      </div>
+    </div>
+  `);
+
+  const form = gate.querySelector("[data-form]");
+  const errorEl = gate.querySelector("[data-error]");
+  const submit = gate.querySelector("[data-submit]");
+
+  gate.querySelector("[data-switch]").onclick = () =>
+    authScreen(isSignup ? "signin" : "signup");
+
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    errorEl.textContent = "";
+    submit.disabled = true;
+
+    const username = gate.querySelector("[data-username]").value;
+    const password = gate.querySelector("[data-password]").value;
+    const email = isSignup ? gate.querySelector("[data-email]").value : "";
+
+    try {
+      if (isSignup) await Auth.signUp({ username, email, password });
+      else await Auth.signIn({ username, password });
+      // onAuth yang melanjutkan ke pemilih profil
+    } catch (err) {
+      errorEl.textContent = Auth.authMessage(err);
+      submit.disabled = false;
+    }
+  };
+}
+
+function initials(name) {
+  return String(name || "?").trim().charAt(0).toUpperCase();
+}
+
+// wajah tersenyum sederhana, digambar sendiri sebagai SVG supaya tidak perlu
+// berkas gambar dan ikut warna kotaknya
+const FACE_SVG = `
+  <svg viewBox="0 0 100 100" class="h-full w-full" aria-hidden="true">
+    <circle cx="34" cy="40" r="6.5" fill="#fff" />
+    <circle cx="66" cy="40" r="6.5" fill="#fff" />
+    <path d="M31 60 Q50 76 69 60" fill="none" stroke="#fff" stroke-width="6.5" stroke-linecap="round" />
+  </svg>`;
+
+const LOCK_SVG = `
+  <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+    <rect x="4" y="10" width="16" height="11" rx="2" />
+    <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+  </svg>`;
+
+function gateBrand() {
+  return `<div class="absolute left-5 top-5 md:left-10 md:top-8">
+    <span class="text-xl font-semibold tracking-wide text-red-600 md:text-2xl">Netflix</span>
+  </div>`;
+}
+
+function profilePicker(message = "") {
+  const list = Auth.allProfiles();
+
+  const tiles = list
+    .map(
+      (p) => `
+      <button type="button" data-profile="${esc(p.id)}"
+        class="group flex w-[104px] flex-col items-center md:w-[140px]">
+        <span class="aspect-square w-full overflow-hidden rounded-md ${esc(p.skin)}
+          ring-white transition duration-200 group-hover:ring-4">
+          ${FACE_SVG}
+        </span>
+        <span class="mt-3 w-full truncate text-center text-base text-neutral-400 transition group-hover:text-white md:text-lg">
+          ${esc(p.name)}
+        </span>
+        ${
+          Auth.hasPin(p)
+            ? `<span class="mt-2 text-neutral-500" title="Profil terkunci">${LOCK_SVG}</span>`
+            : ""
+        }
+      </button>`
+    )
+    .join("");
+
+  const addTile =
+    list.length < Auth.MAX_PROFILES
+      ? `<button type="button" data-add class="group flex w-[104px] flex-col items-center md:w-[140px]">
+           <span class="flex aspect-square w-full items-center justify-center rounded-md border-2 border-neutral-700
+             text-5xl font-light text-neutral-600 transition group-hover:border-white group-hover:text-white">+</span>
+           <span class="mt-3 text-center text-base text-neutral-400 group-hover:text-white md:text-lg">Tambah Profil</span>
+         </button>`
+      : "";
+
+  showGate(`
+    <div class="relative min-h-full">
+      ${gateBrand()}
+
+      <div class="flex min-h-screen flex-col items-center justify-center px-6 py-24">
+        <h1 class="mb-10 text-center text-3xl font-normal md:mb-14 md:text-6xl">Siapa yang menonton?</h1>
+
+        <div class="flex flex-wrap items-start justify-center gap-5 md:gap-8">${tiles}${addTile}</div>
+
+        <p data-error class="mt-8 min-h-5 text-sm text-red-500">${esc(message)}</p>
+
+        <div class="mt-10 flex flex-wrap items-center justify-center gap-3 md:mt-14">
+          <button type="button" data-manage
+            class="border border-neutral-600 px-6 py-2 text-xs uppercase tracking-[0.2em] text-neutral-400
+              transition hover:border-white hover:text-white md:text-sm">Kelola Profil</button>
+          <button type="button" data-logout
+            class="border border-transparent px-6 py-2 text-xs uppercase tracking-[0.2em] text-neutral-500
+              transition hover:text-white md:text-sm">Keluar</button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  gate.querySelectorAll("[data-profile]").forEach((btn) => {
+    btn.onclick = () => {
+      const profile = list.find((p) => p.id === btn.dataset.profile);
+      if (Auth.hasPin(profile)) pinScreen(profile);
+      else enterApp(profile.id);
+    };
+  });
+
+  const addBtn = gate.querySelector("[data-add]");
+  if (addBtn) addBtn.onclick = () => profileForm();
+
+  gate.querySelector("[data-manage]").onclick = () => manageScreen();
+  gate.querySelector("[data-logout]").onclick = () => Auth.logout();
+}
+
+function pinScreen(profile) {
+  showGate(`
+    <div class="relative min-h-full">
+      ${gateBrand()}
+
+      <button type="button" data-back
+        class="absolute right-5 top-5 text-3xl font-light leading-none text-neutral-300 transition hover:text-white md:right-10 md:top-8 md:text-4xl">
+        &times;
+      </button>
+
+      <div class="flex min-h-screen flex-col items-center justify-center px-6 py-24">
+        <p class="mb-3 text-center text-sm text-neutral-400 md:text-base">
+          Profil ${esc(profile.name)} sedang dikunci.
+        </p>
+        <h1 class="mb-10 max-w-2xl text-center text-2xl font-bold md:mb-14 md:text-5xl">
+          Masukkan PIN untuk membuka profil ini.
+        </h1>
+
+        <form data-form class="flex justify-center gap-3 md:gap-4">
+          ${[0, 1, 2, 3]
+            .map(
+              (i) => `<input data-pin="${i}" inputmode="numeric" maxlength="1" type="password"
+                class="h-16 w-14 border-2 border-white bg-transparent text-center text-3xl font-bold
+                  outline-none focus:border-red-600 md:h-20 md:w-20 md:text-4xl" />`
+            )
+            .join("")}
+        </form>
+
+        <p data-error class="mt-6 min-h-6 text-center text-sm text-red-500 md:text-base"></p>
+
+        <button type="button" data-forgot
+          class="mt-10 text-base text-neutral-400 transition hover:text-white md:mt-16 md:text-lg">
+          Lupa PIN?
+        </button>
+      </div>
+    </div>
+  `);
+
+  const boxes = [...gate.querySelectorAll("[data-pin]")];
+  const errorEl = gate.querySelector("[data-error]");
+
+  const submit = async () => {
+    const pin = boxes.map((b) => b.value).join("");
+    if (pin.length < 4) return;
+
+    if (await Auth.checkPin(profile, pin)) {
+      enterApp(profile.id);
+      return;
+    }
+
+    errorEl.textContent = "PIN salah.";
+    boxes.forEach((b) => (b.value = ""));
+    boxes[0].focus();
+  };
+
+  boxes.forEach((box, i) => {
+    box.oninput = () => {
+      box.value = box.value.replace(/\D/g, "").slice(0, 1);
+      if (box.value && i < 3) boxes[i + 1].focus();
+      if (boxes.every((b) => b.value)) submit();
+    };
+
+    // backspace di kotak kosong mundur ke kotak sebelumnya
+    box.onkeydown = (e) => {
+      if (e.key === "Backspace" && !box.value && i > 0) boxes[i - 1].focus();
+    };
+
+    // tempel 4 digit sekaligus
+    box.onpaste = (e) => {
+      const digits = (e.clipboardData.getData("text") || "").replace(/\D/g, "").slice(0, 4);
+      if (!digits) return;
+      e.preventDefault();
+      digits.split("").forEach((d, j) => (boxes[j].value = d));
+      if (digits.length === 4) submit();
+    };
+  });
+
+  gate.querySelector("[data-form]").onsubmit = (e) => e.preventDefault();
+  gate.querySelector("[data-back]").onclick = () => profilePicker();
+
+  // tidak ada email pemulihan di sini; PIN dilepas lewat Kelola Profil
+  gate.querySelector("[data-forgot]").onclick = () => manageScreen();
+
+  boxes[0].focus();
+}
+
+function profileForm(profile = null) {
+  const editing = Boolean(profile);
+
+  showGate(`
+    <div class="flex min-h-full items-center justify-center p-4">
+      <div class="w-full max-w-md rounded-lg bg-[#181818] p-6 shadow-2xl md:p-10">
+        <h1 class="mb-6 text-2xl font-bold">${editing ? "Ubah Profil" : "Profil Baru"}</h1>
+
+        <form data-form class="space-y-4">
+          <input data-name class="${FIELD}" placeholder="Nama profil" maxlength="20"
+            value="${esc(profile?.name || "")}" />
+
+          <div>
+            <label class="flex items-center gap-2 text-sm text-neutral-300">
+              <input data-usepin type="checkbox" class="h-4 w-4"
+                ${editing && Auth.hasPin(profile) ? "checked" : ""} />
+              Kunci profil ini dengan PIN 4 digit
+            </label>
+            <input data-pin inputmode="numeric" maxlength="4"
+              class="${FIELD} mt-3 ${editing && Auth.hasPin(profile) ? "" : "hidden"}"
+              placeholder="${editing && Auth.hasPin(profile) ? "PIN baru (kosongkan = tetap)" : "4 digit angka"}" />
+            <p class="mt-2 text-xs text-neutral-500">
+              PIN memisahkan profil antar anggota keluarga. Ini bukan pengaman data.
+            </p>
+          </div>
+
+          <p data-error class="min-h-5 text-sm text-red-500"></p>
+
+          <div class="flex gap-3">
+            <button data-submit type="submit"
+              class="flex-1 rounded bg-red-600 py-3 font-semibold hover:bg-red-500 disabled:opacity-50">Simpan</button>
+            <button type="button" data-cancel
+              class="rounded border border-neutral-600 px-5 hover:bg-neutral-800">Batal</button>
+          </div>
+        </form>
+
+        ${
+          editing
+            ? `<button type="button" data-delete
+                 class="mt-6 text-sm text-red-500 hover:underline">Hapus profil ini</button>`
+            : ""
+        }
+      </div>
+    </div>
+  `);
+
+  const usePin = gate.querySelector("[data-usepin]");
+  const pinInput = gate.querySelector("[data-pin]");
+  const errorEl = gate.querySelector("[data-error]");
+  const submit = gate.querySelector("[data-submit]");
+
+  usePin.onchange = () => pinInput.classList.toggle("hidden", !usePin.checked);
+  pinInput.oninput = () => (pinInput.value = pinInput.value.replace(/\D/g, "").slice(0, 4));
+
+  gate.querySelector("[data-cancel]").onclick = () => (editing ? manageScreen() : profilePicker());
+
+  const del = gate.querySelector("[data-delete]");
+  if (del) {
+    del.onclick = async () => {
+      if (!confirm(`Hapus profil "${profile.name}" beserta riwayat dan My List-nya?`)) return;
+      del.disabled = true;
+      try {
+        await Auth.deleteProfile(profile.id);
+        manageScreen();
+      } catch (err) {
+        errorEl.textContent = err.message;
+        del.disabled = false;
+      }
+    };
+  }
+
+  gate.querySelector("[data-form]").onsubmit = async (e) => {
+    e.preventDefault();
+    errorEl.textContent = "";
+
+    const name = gate.querySelector("[data-name]").value;
+    const pin = usePin.checked ? pinInput.value : "";
+
+    if (usePin.checked && pin && pin.length !== 4) {
+      errorEl.textContent = "PIN harus 4 digit.";
+      return;
+    }
+    if (usePin.checked && !pin && !(editing && Auth.hasPin(profile))) {
+      errorEl.textContent = "Isi PIN-nya, atau lepas centangnya.";
+      return;
+    }
+    if (pin && !Auth.pinSupported()) {
+      errorEl.textContent = "PIN butuh situs dibuka lewat https atau localhost.";
+      return;
+    }
+
+    submit.disabled = true;
+    try {
+      if (editing) {
+        await Auth.renameProfile(profile.id, name);
+        // kosong + centang menyala = PIN lama dipertahankan
+        if (!usePin.checked) await Auth.setProfilePin(profile.id, "");
+        else if (pin) await Auth.setProfilePin(profile.id, pin);
+        manageScreen();
+      } else {
+        await Auth.createProfile(name, pin);
+        profilePicker();
+      }
+    } catch (err) {
+      errorEl.textContent = err.message;
+      submit.disabled = false;
+    }
+  };
+}
+
+function manageScreen() {
+  const list = Auth.allProfiles();
+
+  showGate(`
+    <div class="flex min-h-full items-center justify-center p-6">
+      <div class="w-full max-w-lg">
+        <h1 class="mb-8 text-center text-2xl font-bold md:text-3xl">Kelola Profil</h1>
+
+        <div class="space-y-2">
+          ${list
+            .map(
+              (p) => `
+            <button type="button" data-edit="${esc(p.id)}"
+              class="flex w-full items-center gap-4 rounded border border-neutral-800 p-3 text-left hover:bg-neutral-800">
+              <span class="flex h-12 w-12 items-center justify-center rounded ${esc(p.skin)} font-bold">
+                ${esc(initials(p.name))}
+              </span>
+              <span class="flex-1">
+                <span class="block font-semibold">${esc(p.name)}</span>
+                <span class="text-xs text-neutral-400">
+                  ${Auth.hasPin(p) ? "Terkunci PIN" : "Tanpa PIN"}
+                </span>
+              </span>
+              <span class="text-neutral-500">Ubah</span>
+            </button>`
+            )
+            .join("")}
+        </div>
+
+        <p class="mt-4 text-xs text-neutral-500">
+          ${list.length} dari ${Auth.MAX_PROFILES} profil terpakai.
+        </p>
+
+        <button type="button" data-done
+          class="mt-8 w-full rounded border border-neutral-600 py-3 text-sm hover:bg-neutral-800">Selesai</button>
+      </div>
+    </div>
+  `);
+
+  gate.querySelectorAll("[data-edit]").forEach((btn) => {
+    btn.onclick = () => profileForm(list.find((p) => p.id === btn.dataset.edit));
+  });
+
+  gate.querySelector("[data-done]").onclick = () => profilePicker();
+}
+
+async function enterApp(profileId) {
+  try {
+    const profile = await Auth.enterProfile(profileId);
+    paintProfileButton(profile);
+    showApp();
+    await init();
+  } catch (err) {
+    console.error("Gagal membuka profil", err);
+    profilePicker("Gagal membuka profil. Coba lagi.");
+  }
+}
+
+// ---------- Tombol profil di header ----------
+function paintProfileButton(profile) {
+  document.getElementById("profile-avatar").className =
+    `flex h-8 w-8 items-center justify-center rounded text-sm font-bold ${profile.skin}`;
+  document.getElementById("profile-avatar").textContent = initials(profile.name);
+  document.getElementById("profile-name").textContent = profile.name;
+}
+
+const profileMenu = document.getElementById("profile-menu");
+
+document.getElementById("profile-button").onclick = (e) => {
+  e.stopPropagation();
+
+  const account = Auth.currentAccount();
+  profileMenu.innerHTML = `
+    <p class="border-b border-neutral-800 px-4 py-2 text-xs text-neutral-500">
+      Masuk sebagai <span class="text-neutral-300">${esc(account?.username || "")}</span>
+    </p>
+    <button type="button" data-switch class="block w-full px-4 py-2 text-left text-sm hover:bg-neutral-800">Ganti Profil</button>
+    <button type="button" data-manage class="block w-full px-4 py-2 text-left text-sm hover:bg-neutral-800">Kelola Profil</button>
+    <button type="button" data-logout class="block w-full px-4 py-2 text-left text-sm text-red-500 hover:bg-neutral-800">Keluar</button>
+  `;
+  profileMenu.classList.toggle("hidden");
+
+  profileMenu.querySelector("[data-switch]").onclick = () => {
+    profileMenu.classList.add("hidden");
+    Auth.clearActiveProfile();
+    profilePicker();
+  };
+  profileMenu.querySelector("[data-manage]").onclick = () => {
+    profileMenu.classList.add("hidden");
+    manageScreen();
+  };
+  profileMenu.querySelector("[data-logout]").onclick = () => Auth.logout();
+};
+
+document.addEventListener("click", () => profileMenu.classList.add("hidden"));
+
+// ---------- Boot ----------
+// onAuth menyala sekali saat halaman dimuat (sesi Firebase bertahan sendiri di
+// browser) dan tiap kali status login berubah.
+Auth.onAuth(async (account) => {
+  if (!account) {
+    authScreen("signin");
+    return;
+  }
+
+  const list = Auth.allProfiles();
+
+  // belum punya profil sama sekali -> langsung ke pembuatan
+  if (!list.length) {
+    profileForm();
+    return;
+  }
+
+  // profil terakhir diingat, jadi buka ulang situs tidak menanyakan apa pun
+  const remembered = Auth.savedProfileId();
+  if (remembered && list.some((p) => p.id === remembered)) {
+    await enterApp(remembered);
+    return;
+  }
+
+  profilePicker();
+});
