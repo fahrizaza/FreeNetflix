@@ -1,0 +1,13 @@
+# Dependensi: dipulihkan dengan `npm install`, tidak perlu ikut ke repo
+node_modules/
+
+# Berkas sistem macOS
+.DS_Store
+
+# Log
+npm-debug.log*
+yarn-error.log*
+
+# Berkas sementara dan keluaran uji
+*.tmp
+*.local

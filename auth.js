@@ -45,7 +45,6 @@ export const MAX_HISTORY = 100;
 // seketika dan server menyusul paling cepat sekali per jeda ini.
 const PROGRESS_WRITE_MS = 15000;
 
-const ACTIVE_PROFILE_KEY = "netflix:profile";
 // disimpan sebagai kelas Tailwind utuh supaya bisa dipakai apa adanya saat
 // menggambar; Tailwind hanya mengenali kelas yang tertulis literal
 const PROFILE_SKINS = [
@@ -201,17 +200,44 @@ export async function loadProfiles() {
   return profiles;
 }
 
-export async function createProfile(name, pin = "") {
-  if (profiles.length >= MAX_PROFILES) throw new Error(`Maksimal ${MAX_PROFILES} profil.`);
+// Profil anak: kids menyalakan batas umurnya, maturity menyimpan batasnya.
+// Keduanya dipisah supaya melepas centang tidak menghapus pilihan sebelumnya.
+//
+// Angkanya umur penonton paling tua yang masih boleh -- 7 dipakai untuk pilihan
+// "di bawah 13 tahun" karena itu tingkat sertifikasi yang ada di bawah 13 (SU
+// dan PG/TV-Y7). Yang pertama jadi bawaan, jadi centang baru selalu jatuh ke
+// pilihan paling ketat.
+export const MATURITY_LEVELS = [7, 13, 18];
 
+function cleanName(name) {
   const clean = String(name || "").trim();
   if (!clean) throw new Error("Nama profil tidak boleh kosong.");
   if (clean.length > 20) throw new Error("Nama profil maksimal 20 karakter.");
+  return clean;
+}
+
+export function isKids(profile) {
+  return Boolean(profile?.kids);
+}
+
+// 0 = tanpa batas. Dibaca saat menyusun baris beranda dan menyaring pencarian.
+export function maturityLimit(profile = activeProfile) {
+  if (!isKids(profile)) return 0;
+  return MATURITY_LEVELS.includes(profile.maturity) ? profile.maturity : MATURITY_LEVELS[0];
+}
+
+export async function createProfile(name, pin = "", extra = {}) {
+  if (profiles.length >= MAX_PROFILES) throw new Error(`Maksimal ${MAX_PROFILES} profil.`);
+
+  const clean = cleanName(name);
 
   const id = `prf_${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`;
   const data = {
     name: clean,
     skin: PROFILE_SKINS[profiles.length % PROFILE_SKINS.length],
+    avatar: extra.avatar || "",
+    kids: Boolean(extra.kids),
+    maturity: MATURITY_LEVELS.includes(extra.maturity) ? extra.maturity : MATURITY_LEVELS[0],
     createdAt: new Date().toISOString(),
     pinSalt: null,
     pinHash: null,
@@ -227,13 +253,21 @@ export async function createProfile(name, pin = "") {
   return id;
 }
 
-export async function renameProfile(id, name) {
-  const clean = String(name || "").trim();
-  if (!clean) throw new Error("Nama profil tidak boleh kosong.");
+// Nama, foto, dan status profil anak disimpan sekaligus: ketiganya diubah dari
+// formulir yang sama, jadi satu tulisan sudah cukup.
+export async function updateProfile(id, { name, avatar, kids, maturity }) {
+  const patch = { name: cleanName(name) };
 
-  await updateDoc(profileRef(id), { name: clean });
+  if (avatar !== undefined) patch.avatar = avatar || "";
+  if (kids !== undefined) patch.kids = Boolean(kids);
+  if (maturity !== undefined) {
+    patch.maturity = MATURITY_LEVELS.includes(maturity) ? maturity : MATURITY_LEVELS[0];
+  }
+
+  await updateDoc(profileRef(id), patch);
+
   const found = profiles.find((p) => p.id === id);
-  if (found) found.name = clean;
+  if (found) Object.assign(found, patch);
 }
 
 // pin kosong = kunci dilepas, profil bisa langsung dibuka
@@ -262,6 +296,39 @@ export async function deleteProfile(id) {
   if (activeProfile?.id === id) clearActiveProfile();
 }
 
+// ---------- Pengaturan tampilan ----------
+// Ditumpangkan ke dokumen profil, bukan localStorage: pilihannya melekat pada
+// profilnya -- profil anak bisa menyaring ketat sementara profil lain tidak --
+// dan tetap sama saat dibuka dari perangkat lain.
+//
+// Bawaannya menyaring: hasil pencarian TMDB penuh judul tanpa gambar dan judul
+// yang tidak ada di layanan mana pun, dan itu yang paling sering bukan yang
+// dicari.
+export const DEFAULT_SETTINGS = {
+  showNoThumb: false, // tampilkan judul tanpa gambar
+  showCam: false, // tampilkan judul yang belum ada di layanan streaming (CAM)
+};
+
+export function settings() {
+  return { ...DEFAULT_SETTINGS, ...(activeProfile?.settings || {}) };
+}
+
+export function updateSettings(patch) {
+  if (!activeProfile) return { ...DEFAULT_SETTINGS };
+
+  const next = { ...settings(), ...patch };
+
+  // activeProfile itu objek yang sama dengan isi profiles, jadi satu penetapan
+  // ini sudah membuat seluruh tampilan membaca nilai baru
+  activeProfile.settings = next;
+
+  updateDoc(profileRef(activeProfile.id), { settings: next }).catch((err) =>
+    console.error("Simpan pengaturan gagal", err)
+  );
+
+  return next;
+}
+
 export function hasPin(profile) {
   return Boolean(profile?.pinHash);
 }
@@ -272,22 +339,10 @@ export async function checkPin(profile, pin) {
 }
 
 // ---------- Profil aktif ----------
-export function savedProfileId() {
-  try {
-    return localStorage.getItem(ACTIVE_PROFILE_KEY) || "";
-  } catch {
-    return "";
-  }
-}
-
-function rememberProfile(id) {
-  try {
-    localStorage.setItem(ACTIVE_PROFILE_KEY, id);
-  } catch {
-    /* mode privat: sesi tetap jalan, cuma tidak diingat setelah reload */
-  }
-}
-
+// Profil terakhir sengaja tidak diingat lagi: membuka situs selalu berhenti di
+// pemilih profil dulu. Menyimpannya jadi tidak ada gunanya -- tidak ada satu pun
+// yang membacanya -- dan justru menyisakan jejak profil mana yang dipakai di
+// perangkat bersama.
 export function clearActiveProfile() {
   // posisi yang masih mengantre ditulis selagi profilnya masih aktif; setelah
   // ini historyRef() tidak punya tujuan lagi
@@ -296,11 +351,6 @@ export function clearActiveProfile() {
   activeProfile = null;
   myList.clear();
   history.clear();
-  try {
-    localStorage.removeItem(ACTIVE_PROFILE_KEY);
-  } catch {
-    /* diabaikan */
-  }
 }
 
 export async function enterProfile(id) {
@@ -312,7 +362,6 @@ export async function enterProfile(id) {
   flushProgress();
 
   activeProfile = profile;
-  rememberProfile(id);
   await loadProfileData();
   return profile;
 }

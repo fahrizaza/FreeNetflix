@@ -1,5 +1,62 @@
 @import "tailwindcss";
 
+/* ---------- Penanda fokus ---------- */
+/* Di TV tidak ada tetikus dan tidak ada sentuhan: satu-satunya cara memilih
+   sesuatu adalah memindahkan fokus dengan tombol panah remote. Seluruh penanda
+   "sedang disorot" di aplikasi ini bergantung pada :hover, dan Tailwind v4
+   membungkus semua varian hover di dalam @media (hover: hover) yang tidak
+   pernah menyala di sana. Tanpa aturan di bawah, layar "Siapa yang menonton?"
+   sama sekali tidak menunjukkan profil mana yang sedang disorot.
+
+   Ditulis sebagai TIGA aturan terpisah, bukan satu daftar selektor. Banyak
+   WebView di set-top box belum mengenal :focus-visible, dan satu selektor tak
+   dikenal membuat SELURUH aturan dibuang -- yang berarti nol penanda, tepat di
+   perangkat yang mau ditolong. Jadi :focus dulu sebagai dasar, baru
+   disempurnakan untuk browser yang lebih baru. */
+:where(a, button, input, select, textarea, [tabindex]):focus {
+  /* 4px supaya terbaca dari jarak tiga meter; offset kecil saja karena baris
+     film itu overflow-x-auto dan TV sering memotong tepi layar (overscan) */
+  outline: 4px solid #fff;
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* tetikus dan sentuh tidak perlu melihat cincinnya */
+:where(a, button, input, select, textarea, [tabindex]):focus:not(:focus-visible) {
+  outline: none;
+}
+
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 4px solid #fff;
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* ---------- Perangkat tanpa hover ---------- */
+/* Di layar sentuh dan di TV, keterangan yang hanya muncul saat hover berarti
+   tidak pernah muncul. Judul dan tahun di kartu ditampilkan permanen di sana. */
+@media (hover: none) {
+  .card-scrim,
+  .card-meta {
+    opacity: 1;
+  }
+
+  .card-meta {
+    transform: none;
+  }
+}
+
+/* Kalau kartunya disorot remote, keterangannya ikut muncul seperti saat hover
+   di komputer. */
+.group\/card:focus-visible .card-scrim,
+.group\/card:focus-visible .card-meta {
+  opacity: 1;
+}
+
+.group\/card:focus-visible .card-meta {
+  transform: none;
+}
+
 /* Animasi gerbang profil. Ditulis sebagai CSS biasa, bukan kelas arbitrer,
    supaya tidak bisa hilang gara-gara pemindaian Tailwind meleset. */
 
@@ -70,13 +127,68 @@
   animation: gate-sweep 1.1s ease-in-out infinite;
 }
 
+/* Pemutar yang dikecilkan: film tetap berjalan di pojok sementara halaman di
+   baliknya bisa dipakai lagi.
+
+   Ditulis sebagai CSS biasa, bukan kelas Tailwind, karena tiga alasan:
+   posisinya butuh env(safe-area-inset-*) supaya tidak tertutup home indicator
+   di ponsel, lebarnya harus menyusut sendiri di layar sempit, dan ukurannya
+   berbeda di TV. Ketiganya lebih jelas ditulis begini daripada sebagai deretan
+   kelas arbitrer. */
+.player-mini {
+  position: fixed;
+  z-index: 60;
+  right: max(0.75rem, env(safe-area-inset-right));
+  bottom: max(0.75rem, env(safe-area-inset-bottom));
+
+  /* di layar sempit ikut menyusut, tidak pernah melewati tepi layar */
+  width: min(20rem, calc(100vw - 1.5rem));
+  aspect-ratio: 16 / 9;
+
+  overflow: hidden;
+  border-radius: 0.5rem;
+  background: #000;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.6);
+  outline: 1px solid rgb(255 255 255 / 0.15);
+  animation: player-shrink 0.22s cubic-bezier(0.22, 0.8, 0.24, 1);
+}
+
+/* Ditonton dari jarak jauh, jadi jendela sekecil ponsel tidak ada gunanya. */
+@media (min-width: 1920px) {
+  .player-mini {
+    width: 30rem;
+    right: max(2rem, env(safe-area-inset-right));
+    bottom: max(2rem, env(safe-area-inset-bottom));
+  }
+}
+
+/* Ponsel mendatar itu pendek sekali; jendela 20rem menutupi hampir separuh
+   tingginya, jadi di sana dikecilkan lagi. */
+@media (orientation: landscape) and (max-height: 480px) {
+  .player-mini {
+    width: 14rem;
+  }
+}
+
+@keyframes player-shrink {
+  from {
+    transform: scale(1.12);
+    opacity: 0.6;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
 /* Pengguna yang mematikan animasi di sistemnya tidak dipaksa melihatnya. */
 @media (prefers-reduced-motion: reduce) {
   .gate-rise,
   .gate-zoom,
   .gate-out,
   .gate-stagger > *,
-  .gate-sweep {
+  .gate-sweep,
+  .player-mini {
     animation-duration: 0.01ms;
     animation-iteration-count: 1;
   }
