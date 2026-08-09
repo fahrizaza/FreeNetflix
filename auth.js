@@ -12,6 +12,8 @@ import {
   signInWithEmailAndPassword,
   signOut as fbSignOut,
   onAuthStateChanged,
+  EmailAuthProvider,
+  reauthenticateWithCredential,
 } from "https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js";
 import {
   getFirestore,
@@ -271,6 +273,25 @@ export async function updateProfile(id, { name, avatar, kids, maturity }) {
 }
 
 // pin kosong = kunci dilepas, profil bisa langsung dibuka
+// Membuktikan bahwa yang di depan layar memang pemilik akunnya, dengan meminta
+// password akun. Dipakai saat PIN profil dilupakan.
+//
+// Memakai reauthenticate, bukan signIn ulang: signIn akan memicu
+// onAuthStateChanged, dan seluruh aplikasi akan dibangun ulang dari nol di
+// tengah alur reset. Reauthenticate memverifikasi tanpa menyentuh sesi.
+//
+// Email diambil dari auth.currentUser, bukan disusun ulang dari username --
+// itu persis alamat yang dipegang Firebase, jadi tidak bisa meleset karena
+// perbedaan penulisan username.
+export async function verifyAccountPassword(password) {
+  const user = auth.currentUser;
+  if (!user?.email) throw new Error("Sesi sudah berakhir. Masuk ulang.");
+  if (!password) throw new Error("Password wajib diisi.");
+
+  await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, password));
+  return true;
+}
+
 export async function setProfilePin(id, pin) {
   const patch = pin
     ? { pinSalt: randomSalt(), pinHash: "" }

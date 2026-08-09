@@ -126,6 +126,14 @@ const ROWS = [
       "&include_adult=false&sort_by=popularity.desc",
     type: "MOVIE",
   },
+  {
+    key: "drakor",
+    title: "Drama Korea",
+    path:
+      `/discover/movie?${ONLY_STREAMABLE}&with_original_language=ko` +
+      "&include_adult=false&sort_by=popularity.desc",
+    type: "MOVIE",
+  },
 ];
 
 // Menu navbar. Tiap bagian punya kumpulan barisnya sendiri; dimuat sekali saat
@@ -2817,10 +2825,12 @@ function profilePicker(message = "") {
 
         <p data-error class="mt-8 min-h-5 text-sm text-red-500">${esc(message)}</p>
 
+        <!-- "Kelola Profil" sengaja tidak ada di sini. Layar ini muncul sebelum
+             siapa pun membuktikan dirinya, jadi tombol yang bisa mengubah atau
+             menghapus profil -- termasuk melepas PIN-nya -- tidak boleh
+             dijangkau dari sini. Kelola Profil tetap ada di menu profil setelah
+             masuk. -->
         <div class="gate-rise mt-10 flex flex-wrap items-center justify-center gap-3 md:mt-14">
-          <button type="button" data-manage
-            class="border border-neutral-600 px-6 py-2 text-xs uppercase tracking-[0.2em] text-neutral-400
-              transition hover:border-white hover:text-white md:text-sm">Kelola Profil</button>
           <button type="button" data-logout
             class="border border-transparent px-6 py-2 text-xs uppercase tracking-[0.2em] text-neutral-500
               transition hover:text-white md:text-sm">Keluar</button>
@@ -2840,7 +2850,6 @@ function profilePicker(message = "") {
   const addBtn = gate.querySelector("[data-add]");
   if (addBtn) addBtn.onclick = () => profileForm();
 
-  gate.querySelector("[data-manage]").onclick = () => manageScreen();
   gate.querySelector("[data-logout]").onclick = () => Auth.logout();
 }
 
@@ -2923,11 +2932,94 @@ function pinScreen(profile) {
 
   gate.querySelector("[data-form]").onsubmit = (e) => e.preventDefault();
   gate.querySelector("[data-back]").onclick = () => profilePicker();
-
-  // tidak ada email pemulihan di sini; PIN dilepas lewat Kelola Profil
-  gate.querySelector("[data-forgot]").onclick = () => manageScreen();
+  gate.querySelector("[data-forgot]").onclick = () => resetPinScreen(profile);
 
   boxes[0].focus();
+}
+
+// Melepas PIN sebuah profil setelah pemiliknya membuktikan diri dengan password
+// akun.
+//
+// Sebelumnya "Lupa PIN?" hanya melempar ke Kelola Profil, dan di sana PIN bisa
+// dilepas tanpa membuktikan apa pun. Artinya PIN itu sekadar hiasan: siapa pun
+// yang memegang perangkat ini bisa melewatinya dalam dua kali klik. Password
+// akun adalah satu-satunya rahasia yang memang dimiliki pemilik akun, jadi
+// itulah yang ditanyakan.
+function resetPinScreen(profile) {
+  showGate(`
+    <div class="relative min-h-full">
+      ${gateBrand()}
+
+      <button type="button" data-back
+        class="absolute right-5 top-5 text-3xl font-light leading-none text-neutral-300 transition hover:text-white md:right-10 md:top-8 md:text-4xl">
+        &times;
+      </button>
+
+      <div class="gate-rise flex min-h-screen flex-col items-center justify-center px-6 py-24">
+        <div class="w-full max-w-md rounded-lg bg-[#181818] p-6 md:p-10">
+          <h1 class="text-2xl font-bold">Lupa PIN</h1>
+          <p class="mt-2 text-sm leading-relaxed text-neutral-400">
+            Masukkan password akun
+            <span class="text-neutral-200">${esc(Auth.currentAccount()?.username || "")}</span>
+            untuk melepas PIN profil
+            <span class="text-neutral-200">${esc(profile.name)}</span>.
+          </p>
+
+          <form data-form class="mt-6 space-y-4">
+            <input data-password type="password" autocomplete="current-password"
+              class="${FIELD}" placeholder="Password akun" />
+
+            <p data-error class="min-h-5 text-sm text-red-500"></p>
+
+            <button data-submit type="submit"
+              class="w-full rounded bg-red-600 py-3 font-semibold hover:bg-red-500 disabled:opacity-50">
+              Lepas PIN &amp; buka profil
+            </button>
+          </form>
+
+          <p class="mt-4 text-xs leading-relaxed text-neutral-500">
+            PIN profil ini akan dihapus. Anda bisa memasangnya lagi lewat Kelola
+            Profil setelah masuk.
+          </p>
+        </div>
+      </div>
+    </div>
+  `);
+
+  const password = gate.querySelector("[data-password]");
+  const errorEl = gate.querySelector("[data-error]");
+  const submit = gate.querySelector("[data-submit]");
+
+  gate.querySelector("[data-back]").onclick = () => pinScreen(profile);
+
+  gate.querySelector("[data-form]").onsubmit = async (e) => {
+    e.preventDefault();
+    errorEl.textContent = "";
+    submit.disabled = true;
+
+    try {
+      // Urutannya penting: buktikan dulu, baru ubah apa pun. Kalau dibalik,
+      // password yang salah tetap meninggalkan profil tanpa PIN.
+      await Auth.verifyAccountPassword(password.value);
+      await Auth.setProfilePin(profile.id, "");
+      enterApp(profile.id);
+    } catch (err) {
+      // authMessage menjawab "Username atau password salah" karena dipakai juga
+      // di layar masuk. Di sini username tidak diketikkan sama sekali, jadi
+      // menyebutnya hanya membingungkan.
+      const code = err?.code || "";
+      errorEl.textContent =
+        code === "auth/invalid-credential" || code === "auth/wrong-password"
+          ? "Password akun salah."
+          : Auth.authMessage(err);
+
+      submit.disabled = false;
+      password.value = "";
+      password.focus();
+    }
+  };
+
+  password.focus();
 }
 
 function profileForm(profile = null) {
