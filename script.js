@@ -385,6 +385,11 @@ function duration(item) {
 // "23 menit" / "1 jam 5 menit" -- posisi tontonan selalu disebut dalam menit,
 // detiknya tidak menambah apa pun bagi yang membacanya
 function clockText(seconds) {
+  // Nol harus tetap nol. Math.max di bawah ada supaya posisi 40 detik tidak
+  // terbaca "0 menit" -- tapi kalau dibiarkan menangani nol juga, panel admin
+  // akan melaporkan orang yang belum pernah menonton sebagai "1 menit".
+  if (!seconds) return "0 menit";
+
   const mins = Math.max(1, Math.round(seconds / 60));
   const h = Math.floor(mins / 60);
   const m = mins % 60;
@@ -2772,8 +2777,13 @@ const LOCK_SVG_LG = `
     <path d="M17 9V7a5 5 0 0 0-10 0v2H5.5A1.5 1.5 0 0 0 4 10.5v10A1.5 1.5 0 0 0 5.5 22h13a1.5 1.5 0 0 0 1.5-1.5v-10A1.5 1.5 0 0 0 18.5 9H17Zm-8 0V7a3 3 0 0 1 6 0v2H9Zm3 5a1.6 1.6 0 0 1 .8 3v1.7a.8.8 0 0 1-1.6 0V17A1.6 1.6 0 0 1 12 14Z" />
   </svg>`;
 
+// z-20 di sini dan di semua tombol silang bukan hiasan. Isi tiap layar gerbang
+// dibungkus .gate-rise, yang beranimasi transform -- dan transform membuat
+// stacking context, yang menaikkannya sejajar dengan elemen berposisi. Karena
+// ia muncul belakangan di DOM, tanpa z-index ia menang dan menutupi tombol
+// silang di pojok, membuatnya tidak bisa diklik.
 function gateBrand() {
-  return `<div class="absolute left-5 top-5 md:left-10 md:top-8">
+  return `<div class="absolute left-5 top-5 z-20 md:left-10 md:top-8">
     <span class="text-xl font-semibold tracking-wide text-red-600 md:text-2xl">CinemaHub</span>
   </div>`;
 }
@@ -2859,7 +2869,7 @@ function pinScreen(profile) {
       ${gateBrand()}
 
       <button type="button" data-back
-        class="absolute right-5 top-5 text-3xl font-light leading-none text-neutral-300 transition hover:text-white md:right-10 md:top-8 md:text-4xl">
+        class="absolute right-5 top-5 z-20 text-3xl font-light leading-none text-neutral-300 transition hover:text-white md:right-10 md:top-8 md:text-4xl">
         &times;
       </button>
 
@@ -2951,7 +2961,7 @@ function resetPinScreen(profile) {
       ${gateBrand()}
 
       <button type="button" data-back
-        class="absolute right-5 top-5 text-3xl font-light leading-none text-neutral-300 transition hover:text-white md:right-10 md:top-8 md:text-4xl">
+        class="absolute right-5 top-5 z-20 text-3xl font-light leading-none text-neutral-300 transition hover:text-white md:right-10 md:top-8 md:text-4xl">
         &times;
       </button>
 
@@ -3514,7 +3524,7 @@ function settingsScreen() {
     <div class="relative min-h-full">
       ${gateBrand()}
       <button type="button" data-back
-        class="absolute right-5 top-5 text-3xl font-light leading-none text-neutral-300 hover:text-white md:right-10 md:top-8 md:text-4xl">&times;</button>
+        class="absolute right-5 top-5 z-20 text-3xl font-light leading-none text-neutral-300 hover:text-white md:right-10 md:top-8 md:text-4xl">&times;</button>
 
       <div class="gate-rise flex min-h-screen flex-col items-center justify-center px-6 py-24">
         <div class="w-full max-w-md rounded-lg bg-[#181818] p-6 md:p-10">
@@ -3607,7 +3617,7 @@ function adminScreen() {
     <div class="relative min-h-full">
       ${gateBrand()}
       <button type="button" data-back
-        class="absolute right-5 top-5 text-3xl font-light leading-none text-neutral-300 hover:text-white md:right-10 md:top-8 md:text-4xl">&times;</button>
+        class="absolute right-5 top-5 z-20 text-3xl font-light leading-none text-neutral-300 hover:text-white md:right-10 md:top-8 md:text-4xl">&times;</button>
 
       <div class="gate-rise mx-auto w-full max-w-3xl px-5 py-24 md:px-8">
         <h1 class="text-2xl font-bold md:text-3xl">Panel Admin</h1>
@@ -3707,34 +3717,58 @@ async function muatAktivitas(baris) {
     return;
   }
 
-  kotak.innerHTML = profil
-    .map((p) => {
-      const judul = p.history.length
-        ? `<ul class="mt-2 space-y-1">${p.history
-            .map(
-              (h) => `
-              <li class="flex items-baseline justify-between gap-3">
-                <span class="min-w-0 truncate text-neutral-200">
-                  ${esc(h.title || "(tanpa judul)")}
-                  ${h.season ? `<span class="text-neutral-500">S${esc(h.season)}:E${esc(h.episode)}</span>` : ""}
-                </span>
-                <span class="shrink-0 text-xs text-neutral-500">${esc(timeAgo(h.watchedAt) || "")}</span>
-              </li>`
-            )
-            .join("")}</ul>`
-        : `<p class="mt-1 text-xs text-neutral-600">Belum pernah menonton.</p>`;
+  const totalAkun = profil.reduce((n, p) => n + lamaTonton(p.history), 0);
 
-      return `
-        <div class="mb-4 last:mb-0">
-          <p class="font-semibold text-white">
-            ${esc(p.name || "(tanpa nama)")}
-            ${Auth.isKids(p) ? `<span class="ml-1 rounded bg-neutral-700 px-1.5 text-[10px] font-bold">KIDS</span>` : ""}
-            <span class="ml-1 text-xs font-normal text-neutral-500">${p.history.length} judul</span>
-          </p>
-          ${judul}
-        </div>`;
-    })
-    .join("");
+  kotak.innerHTML =
+    `<p class="mb-4 border-b border-neutral-800 pb-3 text-neutral-300">
+       Total menonton akun ini:
+       <span class="font-semibold text-white">${esc(clockText(totalAkun))}</span>
+     </p>` +
+    profil
+      .map((p) => {
+        const total = lamaTonton(p.history);
+
+        const judul = p.history.length
+          ? `<ul class="mt-2 space-y-1">${p.history
+              .map(
+                (h) => `
+                <li class="flex items-baseline justify-between gap-3">
+                  <span class="min-w-0 truncate text-neutral-200">
+                    ${esc(h.title || "(tanpa judul)")}
+                    ${h.season ? `<span class="text-neutral-500">S${esc(h.season)}:E${esc(h.episode)}</span>` : ""}
+                  </span>
+                  <span class="shrink-0 text-xs text-neutral-500">
+                    ${h.watchedSec ? `${esc(clockText(h.watchedSec))} &middot; ` : ""}${esc(timeAgo(h.watchedAt) || "")}
+                  </span>
+                </li>`
+              )
+              .join("")}</ul>`
+          : `<p class="mt-1 text-xs text-neutral-600">Belum pernah menonton.</p>`;
+
+        return `
+          <div class="mb-4 last:mb-0">
+            <p class="font-semibold text-white">
+              ${esc(p.name || "(tanpa nama)")}
+              ${Auth.isKids(p) ? `<span class="ml-1 rounded bg-neutral-700 px-1.5 text-[10px] font-bold">KIDS</span>` : ""}
+              <span class="ml-1 text-xs font-normal text-neutral-500">
+                ${p.history.length} judul${total ? ` &middot; ${esc(clockText(total))}` : ""}
+              </span>
+            </p>
+            ${judul}
+          </div>`;
+      })
+      .join("");
+}
+
+// Total detik yang benar-benar ditonton dari sekumpulan entri riwayat.
+//
+// Entri lama -- yang tercatat sebelum watchedSec ada -- tidak punya angka ini
+// dan dihitung nol. Sengaja tidak ditambal dengan menjumlahkan progressSec:
+// progressSec itu POSISI, bukan lama menonton, dan ia dinolkan tiap pindah
+// episode. Menjumlahkannya akan menghasilkan angka yang terlihat masuk akal
+// padahal salah -- lebih baik nol yang jujur daripada angka yang mengarang.
+function lamaTonton(history) {
+  return (history || []).reduce((n, h) => n + (h.watchedSec || 0), 0);
 }
 
 function accountScreen() {
@@ -3744,7 +3778,7 @@ function accountScreen() {
     <div class="relative min-h-full">
       ${gateBrand()}
       <button type="button" data-back
-        class="absolute right-5 top-5 text-3xl font-light leading-none text-neutral-300 hover:text-white md:right-10 md:top-8 md:text-4xl">&times;</button>
+        class="absolute right-5 top-5 z-20 text-3xl font-light leading-none text-neutral-300 hover:text-white md:right-10 md:top-8 md:text-4xl">&times;</button>
 
       <div class="gate-rise flex min-h-screen flex-col items-center justify-center px-6">
         <div class="w-full max-w-md rounded-lg bg-[#181818] p-6 md:p-10">

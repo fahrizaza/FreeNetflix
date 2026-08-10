@@ -1235,6 +1235,9 @@
   .pb-1 {
     padding-bottom: var(--spacing);
   }
+  .pb-3 {
+    padding-bottom: calc(var(--spacing) * 3);
+  }
   .pb-16 {
     padding-bottom: calc(var(--spacing) * 16);
   }

@@ -47,6 +47,11 @@ export const MAX_HISTORY = 100;
 // seketika dan server menyusul paling cepat sekali per jeda ini.
 const PROGRESS_WRITE_MS = 15000;
 
+// Batas selisih posisi yang masih dianggap "benar-benar ditonton". Kabar posisi
+// datang tiap beberapa detik; apa pun yang melompat lebih jauh dari ini pasti
+// geseran, bukan tontonan.
+const MAX_TICK_SEC = 60;
+
 // disimpan sebagai kelas Tailwind utuh supaya bisa dipakai apa adanya saat
 // menggambar; Tailwind hanya mengenali kelas yang tertulis literal
 const PROFILE_SKINS = [
@@ -536,6 +541,15 @@ export function recordPlay(item, ep = null) {
     progressSec: sameTitle ? before.progressSec || 0 : 0,
     durationSec: sameTitle ? before.durationSec || 0 : 0,
     progressAt: sameTitle ? before.progressAt || "" : "",
+
+    // Total lama menonton judul ini, menumpuk sepanjang waktu.
+    //
+    // Harus disalin ulang di sini karena entry dibangun dari nol, bukan dari
+    // penyebaran before -- kalau terlewat, hitungannya kembali nol tiap kali
+    // tombol Play ditekan. Berbeda dengan progressSec, angka ini TIDAK pernah
+    // dinolkan saat pindah episode: yang sudah ditonton tetap sudah ditonton.
+    watchedSec: before?.watchedSec || 0,
+
     watchedAt: new Date().toISOString(),
     startedAt: before?.startedAt || new Date().toISOString(),
     playCount: (before?.playCount || 0) + 1,
@@ -586,11 +600,27 @@ export function recordProgress(itemId, ep, seconds, duration = 0) {
   const key = playKey(ep);
   const sameTitle = before.progressKey === key;
   const now = new Date().toISOString();
+  const posisi = Math.max(0, Math.round(seconds));
+
+  // Selisih posisi antara dua kabar berturut-turut kira-kira sama dengan waktu
+  // yang benar-benar ditonton. Kabar datang tiap beberapa detik, jadi selisih
+  // yang wajar hanya sekian detik.
+  //
+  // Yang di luar rentang itu dibuang, dan justru inilah inti perhitungannya:
+  //   - lompat maju (skip iklan, geser ke tengah) menghasilkan selisih besar
+  //     yang bukan tontonan
+  //   - melanjutkan dari posisi tersimpan menghasilkan lompatan sekali di awal
+  //   - mundur menghasilkan selisih negatif
+  // Tanpa saringan ini, satu geseran ke akhir film akan tercatat sebagai
+  // "menonton dua jam".
+  const maju = posisi - (before.progressSec || 0);
+  const wajar = maju > 0 && maju <= MAX_TICK_SEC;
 
   const entry = {
     ...before,
     progressKey: key,
-    progressSec: Math.max(0, Math.round(seconds)),
+    progressSec: posisi,
+    watchedSec: (before.watchedSec || 0) + (wajar ? maju : 0),
     // durasi kadang belum ikut di kabar pertama; yang lama dipertahankan selama
     // masih tayangan yang sama
     durationSec: Math.max(0, Math.round(duration)) || (sameTitle ? before.durationSec || 0 : 0),
