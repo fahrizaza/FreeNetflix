@@ -1088,7 +1088,7 @@ function openDetail(item) {
           <div class="mt-3 flex items-center gap-2 sm:mt-5 sm:gap-3">
             <button type="button" data-play disabled
               class="flex items-center gap-2 rounded bg-white px-4 py-1.5 text-sm font-bold text-black hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-40 sm:px-7 sm:py-2 sm:text-lg">
-              <span class="leading-none sm:text-xl">&#9654;</span>
+              ${ICON_PLAY}
               <span data-play-label>Play</span>
             </button>
 
@@ -1542,6 +1542,30 @@ function closeDetail() {
     clear;
 }
 
+// ---------- Ikon ----------
+// Digambar sebagai SVG inline, bukan diambil dari Font Awesome atau pustaka
+// ikon lain.
+//
+// Tujuannya sama -- bentuk yang identik di semua perangkat, bukan karakter
+// Unicode seperti "▶" yang digambar berbeda oleh tiap sistem operasi. Tapi SVG
+// inline mencapainya tanpa menambah satu pun request ke server luar, dan tanpa
+// risiko ikon menghilang kalau CDN-nya lambat atau diblokir. Seluruh proyek ini
+// tidak punya dependensi eksternal; menambah satu demi enam ikon tidak sepadan.
+//
+// Semuanya memakai viewBox 24x24 dan currentColor supaya sewarna dengan
+// tombolnya, sama seperti ikon yang sudah ada di berkas ini.
+const ICON_PLAY = `<svg viewBox="0 0 24 24" class="h-4 w-4 sm:h-5 sm:w-5" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>`;
+
+const strokeIcon = (path, size = "h-5 w-5") =>
+  `<svg viewBox="0 0 24 24" class="${size}" fill="none" stroke="currentColor" stroke-width="2"
+     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+
+const ICON_BACK = strokeIcon(`<path d="M19 12H5m0 0 6-6m-6 6 6 6"/>`);
+const ICON_MINIMIZE = strokeIcon(`<path d="M7 7l9 9m0-5v5h-5"/>`);
+const ICON_MAXIMIZE = strokeIcon(`<path d="M16 8l-9 9m0-5v5h5"/>`, "h-4 w-4");
+const ICON_CLOSE = strokeIcon(`<path d="M6 6l12 12M18 6 6 18"/>`, "h-4 w-4");
+const ICON_NEXT = strokeIcon(`<path d="M9 6l6 6-6 6"/>`, "h-4 w-4");
+
 // ---------- Player fullscreen ----------
 // "full" = menutupi layar, "mini" = jendela kecil di pojok sambil menjelajah
 let playerMode = "full";
@@ -1551,6 +1575,13 @@ let playerMode = "full";
 let nextUp = null;
 let nextTimer = null;
 
+// Sudahkah tombolnya menyembul sendiri sekali untuk episode ini.
+//
+// Kemunculan PERTAMA memang otomatis -- begitu sisa waktu masuk jendelanya --
+// supaya penonton tahu tombol itu ada. Sesudah itu ia hanya kembali kalau
+// dipanggil gerakan atau ketukan, jadi tidak menetap menutupi film.
+let nextAutoShown = false;
+
 // Durasi terakhir yang dikabarkan pemutar. Disimpan supaya sisa waktu bisa
 // dihitung kapan saja, bukan hanya pada detik kabar itu datang -- tombolnya
 // dipicu oleh gerakan kursor, yang waktunya tidak ada hubungannya dengan
@@ -1558,7 +1589,7 @@ let nextTimer = null;
 let lastDuration = 0;
 
 // Berapa lama tombolnya menetap setelah dipanggil.
-const NEXT_VISIBLE_MS = 5000;
+const NEXT_VISIBLE_MS = 3000;
 
 // Sisa waktu di bawah ini dianggap "sudah mau selesai" -- kira-kira sepanjang
 // credit dan outro pada umumnya.
@@ -1568,7 +1599,7 @@ const NEXT_VISIBLE_MS = 5000;
 // yang bisa dipakai adalah sisa waktu. Kalau outro sebuah serial jauh lebih
 // panjang atau pendek dari ini, tombolnya akan meleset -- itu batas datanya,
 // bukan sesuatu yang bisa diakali.
-const NEXT_AT_SEC = 150;
+const NEXT_AT_SEC = 180;
 
 function requestFullscreen(el) {
   const fn = el.requestFullscreen || el.webkitRequestFullscreen;
@@ -1713,6 +1744,12 @@ window.addEventListener("message", (e) => {
   lastDuration = duration;
   lastReportedSec = seconds;
 
+  // Kemunculan pertama, sekali saja, begitu sisa waktu masuk jendelanya.
+  if (!nextAutoShown && waktunyaEpisodeBerikutnya()) {
+    nextAutoShown = true;
+    bangunkanTombolNext();
+  }
+
   if (seconds < MIN_PROGRESS_SEC) return;
 
   // jeda adalah titik simpan yang wajar, jadi ia melewati saringan langkah
@@ -1815,27 +1852,16 @@ function openPlayer(item, ep = null) {
 
          Setengah tembus pandang supaya tidak mencuri perhatian dari filmnya,
          dan jadi pekat begitu di-hover, disentuh, atau disorot remote. -->
-    <!-- max-w memakai garis bawah sebagai spasi: di dalam calc(), tanda minus
-         WAJIB diapit spasi, dan tanpa itu Tailwind tidak mengompilasi kelasnya
-         sama sekali -- judul panjang akan mendorong strip ini keluar layar
-         tanpa satu pun galat yang terlihat. -->
-    <div data-controls class="player-controls absolute left-3 top-3 z-30 flex max-w-[calc(100%_-_1.5rem)] items-center gap-2 sm:left-4 sm:top-4 sm:max-w-[calc(100%_-_2rem)]">
+    <div data-controls class="player-controls absolute left-3 top-3 z-30 flex items-center gap-2 sm:left-4 sm:top-4">
       <button type="button" data-back title="Kembali" aria-label="Kembali"
-        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 text-xl leading-none backdrop-blur-sm">
-        &#8592;
+        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 backdrop-blur-sm">
+        ${ICON_BACK}
       </button>
 
       <button type="button" data-min title="Kecilkan (M)" aria-label="Kecilkan"
-        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 text-lg leading-none backdrop-blur-sm">
-        &#8600;
+        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 backdrop-blur-sm">
+        ${ICON_MINIMIZE}
       </button>
-
-      <div class="min-w-0 rounded-2xl bg-black/60 px-3 py-1.5 backdrop-blur-sm">
-        <p class="truncate text-sm font-semibold leading-tight">${esc(item.title)}</p>
-        <p data-sub class="truncate text-[11px] leading-tight text-neutral-400">
-          ${ep ? `S${ep.season}:E${ep.number} &middot; ` : ""}${esc(item.year)}
-        </p>
-      </div>
     </div>
 
     <!-- Zona pemicu tak terlihat di pojok kanan atas.
@@ -1856,18 +1882,18 @@ function openPlayer(item, ep = null) {
     <button type="button" data-next
       class="absolute right-3 top-3 z-30 hidden max-w-[calc(100%_-_1.5rem)] items-center gap-2 rounded bg-white px-4 py-2.5 text-sm font-bold text-black shadow-2xl transition hover:bg-white/85 sm:right-4 sm:top-4">
       <span data-next-label class="truncate">Next To</span>
-      <span class="shrink-0">&#8250;</span>
+      <span class="shrink-0">${ICON_NEXT}</span>
     </button>
 
     <div data-minibar class="absolute inset-x-0 bottom-0 z-20 hidden items-center gap-1 bg-gradient-to-t from-black/95 via-black/70 to-transparent px-2 pb-1 pt-6">
       <p class="min-w-0 flex-1 truncate text-xs font-semibold">${esc(item.title)}</p>
-      <button type="button" data-max title="Besarkan"
-        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/70 text-base leading-none hover:bg-black">
-        &#8599;
+      <button type="button" data-max title="Besarkan" aria-label="Besarkan"
+        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/70 hover:bg-black">
+        ${ICON_MAXIMIZE}
       </button>
-      <button type="button" data-shut title="Tutup"
-        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/70 text-lg leading-none hover:bg-black">
-        &times;
+      <button type="button" data-shut title="Tutup" aria-label="Tutup"
+        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/70 hover:bg-black">
+        ${ICON_CLOSE}
       </button>
     </div>
   `;
@@ -1881,6 +1907,7 @@ function openPlayer(item, ep = null) {
   // Episode berikutnya dicari sekarang, bukan nanti saat tombolnya mau muncul:
   // saat itu penonton sudah di detik-detik akhir dan tidak boleh menunggu.
   nextUp = null;
+  nextAutoShown = false; // episode baru berhak dapat kemunculan otomatisnya sendiri
   el.querySelector("[data-next]").onclick = () => {
     if (nextUp) openPlayer(item, nextUp);
   };
