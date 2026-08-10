@@ -1,0 +1,86 @@
+rules_version = '2';
+
+// ---------------------------------------------------------------------------
+// Aturan keamanan Firestore untuk CinemaHub.
+//
+// CARA MEMASANG (wajib, kalau tidak panel admin akan ditolak):
+//   Firebase Console -> Firestore Database -> tab Rules -> tempel isi berkas
+//   ini -> Publish.
+//
+// KENAPA BERKAS INI ADA:
+// Aplikasi ini tidak punya server. Seluruh pembacaan dan penulisan Firestore
+// berangkat langsung dari browser, jadi apa pun yang diperiksa di JavaScript
+// bisa dilewati siapa saja lewat DevTools. Berkas inilah satu-satunya tempat
+// yang benar-benar menentukan siapa boleh membaca dan menulis apa, karena
+// aturan di sini dijalankan server Google, bukan browser pengguna.
+//
+// Khususnya: "hanya admin yang bisa melihat data pengguna lain" TIDAK dijamin
+// oleh kode di script.js. Dijaminnya di sini.
+// ---------------------------------------------------------------------------
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Admin dikenali dari EMAIL di token autentikasi, bukan dari isi dokumen.
+    //
+    // Ini penting dan sempat salah. Versi pertama aturan ini membaca
+    // usernameKey dari dokumen users/{uid} milik si pemanggil. Padahal dokumen
+    // itu ditulis oleh pemanggil sendiri (allow create di bawah), jadi siapa
+    // pun tinggal mendaftar lalu menulis usernameKey: "admin" ke dokumennya
+    // sendiri, dan seketika bisa membaca riwayat tontonan semua orang.
+    //
+    // Email di request.auth.token diterbitkan Firebase saat login dan ikut
+    // ditandatangani; klien tidak punya cara mengubahnya. Aplikasi ini memakai
+    // username sebagai email internal (lihat usernameEmail di auth.js), jadi
+    // pemilik username "admin" -- dan hanya dia -- punya email di bawah ini.
+    //
+    // Bonus: tidak ada get() sama sekali, jadi tiap pemeriksaan tidak lagi
+    // memakan satu pembacaan dokumen berbayar.
+    function pemanggilAdalahAdmin() {
+      return request.auth != null
+        && request.auth.token.email == 'admin@cinema-hubs.firebaseapp.com';
+    }
+
+    function pemilik(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // ---------------- Akun ----------------
+    match /users/{uid} {
+      // Pemilik selalu boleh membaca akunnya sendiri. Admin boleh membaca
+      // semuanya -- termasuk mendaftar isi koleksi, yang dibutuhkan panel
+      // admin untuk menampilkan daftar pengguna.
+      allow read: if pemilik(uid) || pemanggilAdalahAdmin();
+
+      // Hanya pemiliknya yang boleh membuat dan mengubah dokumen akunnya.
+      // Admin sengaja TIDAK diberi izin tulis: panelnya hanya untuk melihat,
+      // dan izin yang tidak dibutuhkan sebaiknya tidak diberikan.
+      allow create: if pemilik(uid);
+      allow update: if pemilik(uid);
+      allow delete: if false;
+
+      // ---------------- Profil, My List, riwayat ----------------
+      match /profiles/{profileId} {
+        allow read: if pemilik(uid) || pemanggilAdalahAdmin();
+        allow write: if pemilik(uid);
+
+        match /{sub=**} {
+          allow read: if pemilik(uid) || pemanggilAdalahAdmin();
+          allow write: if pemilik(uid);
+        }
+      }
+    }
+
+    // Catatan untuk yang membaca nanti: baris ini TIDAK memblokir apa pun,
+    // karena aturan Firestore digabung dengan "atau" -- satu penolakan tidak
+    // bisa membatalkan izin yang diberikan aturan lain. Yang sebenarnya
+    // menutup segalanya adalah perilaku bawaan Firestore: apa yang tidak
+    // diizinkan secara eksplisit, otomatis ditolak.
+    //
+    // Ditulis di sini semata sebagai pengingat bahwa itu memang yang
+    // diinginkan, bukan kelupaan.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -3541,6 +3541,22 @@ function settingsScreen() {
 
           <p data-note class="mt-4 min-h-5 text-xs text-neutral-500"></p>
 
+          ${
+            // Hanya muncul untuk akun admin. Ini menyembunyikan tombolnya saja,
+            // bukan menjaga datanya -- yang menjaga adalah firestore.rules.
+            Auth.isAdmin()
+              ? `<div class="mt-6 border-t border-neutral-800 pt-6">
+                   <button type="button" data-admin
+                     class="w-full rounded border border-red-600/60 py-3 text-sm font-semibold text-red-500 hover:bg-red-600/10">
+                     Panel Admin
+                   </button>
+                   <p class="mt-2 text-xs leading-relaxed text-neutral-500">
+                     Melihat seluruh akun terdaftar beserta riwayat tontonannya.
+                   </p>
+                 </div>`
+              : ""
+          }
+
           <button type="button" data-close
             class="mt-6 w-full rounded border border-neutral-600 py-3 text-sm hover:bg-neutral-800">Kembali</button>
         </div>
@@ -3577,6 +3593,148 @@ function settingsScreen() {
 
   gate.querySelector("[data-back]").onclick = back;
   gate.querySelector("[data-close]").onclick = back;
+  gate.querySelector("[data-admin]")?.addEventListener("click", () => adminScreen());
+}
+
+// ---------- Panel admin ----------
+// Menampilkan seluruh akun terdaftar beserta riwayat tontonan tiap profilnya.
+//
+// Panel ini hanya membaca, tidak pernah menulis. Firestore.rules pun sengaja
+// tidak memberi admin izin tulis ke data akun lain: izin yang tidak dibutuhkan
+// sebaiknya memang tidak ada.
+function adminScreen() {
+  showGate(`
+    <div class="relative min-h-full">
+      ${gateBrand()}
+      <button type="button" data-back
+        class="absolute right-5 top-5 text-3xl font-light leading-none text-neutral-300 hover:text-white md:right-10 md:top-8 md:text-4xl">&times;</button>
+
+      <div class="gate-rise mx-auto w-full max-w-3xl px-5 py-24 md:px-8">
+        <h1 class="text-2xl font-bold md:text-3xl">Panel Admin</h1>
+        <p class="mt-2 text-sm text-neutral-400">Seluruh akun terdaftar dan riwayat tontonannya.</p>
+
+        <div data-isi class="mt-8 text-sm text-neutral-400">Memuat daftar akun...</div>
+
+        <button type="button" data-close
+          class="mt-10 w-full rounded border border-neutral-600 py-3 text-sm hover:bg-neutral-800">Kembali</button>
+      </div>
+    </div>
+  `);
+
+  const isi = gate.querySelector("[data-isi]");
+  const kembali = () => settingsScreen();
+
+  gate.querySelector("[data-back]").onclick = kembali;
+  gate.querySelector("[data-close]").onclick = kembali;
+
+  muatDaftarAkun(isi);
+}
+
+async function muatDaftarAkun(isi) {
+  let akun;
+  try {
+    akun = await Auth.listAccounts();
+  } catch (err) {
+    console.error("Daftar akun gagal dimuat", err);
+
+    // Kegagalan paling mungkin di sini bukan kode yang rusak, melainkan aturan
+    // Firestore yang belum dipasang. Pesannya menyebut itu langsung, supaya
+    // tidak ada yang membuang waktu mencari bug di tempat yang salah.
+    isi.innerHTML =
+      err?.code === "permission-denied"
+        ? `<div class="rounded border border-red-600/50 bg-red-600/10 p-4 leading-relaxed text-red-300">
+             <p class="font-semibold">Firestore menolak permintaan ini.</p>
+             <p class="mt-2 text-red-200/80">
+               Aturan keamanan belum mengizinkan admin membaca akun lain. Buka
+               Firebase Console &rarr; Firestore Database &rarr; Rules, lalu
+               tempel isi berkas <span class="font-mono">firestore.rules</span>
+               dari repo ini dan tekan Publish.
+             </p>
+           </div>`
+        : `<p class="text-red-400">Gagal memuat: ${esc(err?.message || "kesalahan tidak diketahui")}</p>`;
+    return;
+  }
+
+  if (!akun.length) {
+    isi.textContent = "Belum ada akun terdaftar.";
+    return;
+  }
+
+  isi.innerHTML = akun
+    .map(
+      (a) => `
+      <details data-uid="${esc(a.uid)}" class="mb-2 rounded border border-neutral-800 bg-black/30">
+        <summary class="cursor-pointer list-none p-4 hover:bg-neutral-900">
+          <span class="font-semibold text-white">${esc(a.username || "(tanpa username)")}</span>
+          ${Auth.isAdmin() && a.usernameKey === "admin" ? `<span class="ml-2 rounded bg-red-600 px-1.5 text-[10px] font-bold text-white">ADMIN</span>` : ""}
+          <span class="ml-2 text-xs text-neutral-500">${esc(a.email || "tanpa email")}</span>
+          <span class="float-right text-xs text-neutral-600">${esc(String(a.createdAt || "").slice(0, 10))}</span>
+        </summary>
+        <div data-aktivitas class="border-t border-neutral-800 p-4 text-neutral-400">Klik untuk memuat...</div>
+      </details>`
+    )
+    .join("");
+
+  // Riwayat baru diambil saat akunnya dibuka, bukan sekaligus di awal. Memuat
+  // riwayat seluruh akun di muka berarti puluhan pembacaan Firestore untuk data
+  // yang mungkin tidak satu pun dilihat.
+  isi.querySelectorAll("details").forEach((baris) => {
+    baris.addEventListener(
+      "toggle",
+      () => {
+        if (baris.open) muatAktivitas(baris);
+      },
+      { once: true }
+    );
+  });
+}
+
+async function muatAktivitas(baris) {
+  const kotak = baris.querySelector("[data-aktivitas]");
+  kotak.textContent = "Memuat riwayat...";
+
+  let profil;
+  try {
+    profil = await Auth.accountActivity(baris.dataset.uid);
+  } catch (err) {
+    console.error("Aktivitas gagal dimuat", err);
+    kotak.innerHTML = `<p class="text-red-400">Gagal memuat riwayat akun ini.</p>`;
+    return;
+  }
+
+  if (!profil.length) {
+    kotak.textContent = "Akun ini belum punya profil.";
+    return;
+  }
+
+  kotak.innerHTML = profil
+    .map((p) => {
+      const judul = p.history.length
+        ? `<ul class="mt-2 space-y-1">${p.history
+            .map(
+              (h) => `
+              <li class="flex items-baseline justify-between gap-3">
+                <span class="min-w-0 truncate text-neutral-200">
+                  ${esc(h.title || "(tanpa judul)")}
+                  ${h.season ? `<span class="text-neutral-500">S${esc(h.season)}:E${esc(h.episode)}</span>` : ""}
+                </span>
+                <span class="shrink-0 text-xs text-neutral-500">${esc(timeAgo(h.watchedAt) || "")}</span>
+              </li>`
+            )
+            .join("")}</ul>`
+        : `<p class="mt-1 text-xs text-neutral-600">Belum pernah menonton.</p>`;
+
+      return `
+        <div class="mb-4 last:mb-0">
+          <p class="font-semibold text-white">
+            ${esc(p.name || "(tanpa nama)")}
+            ${Auth.isKids(p) ? `<span class="ml-1 rounded bg-neutral-700 px-1.5 text-[10px] font-bold">KIDS</span>` : ""}
+            <span class="ml-1 text-xs font-normal text-neutral-500">${p.history.length} judul</span>
+          </p>
+          ${judul}
+        </div>`;
+    })
+    .join("");
 }
 
 function accountScreen() {

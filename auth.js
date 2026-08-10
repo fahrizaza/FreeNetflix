@@ -187,6 +187,59 @@ export function authMessage(err) {
   return err?.message || "Terjadi kesalahan.";
 }
 
+// ---------- Admin ----------
+// Akun dengan username ini bisa melihat aktivitas seluruh akun.
+//
+// PENTING, dan tolong jangan dianggap remeh: pemeriksaan di bawah hanya
+// menentukan apakah TOMBOLNYA muncul. Ia bukan pengaman. Aplikasi ini tidak
+// punya server -- semua pembacaan Firestore berangkat langsung dari browser --
+// jadi siapa pun yang membuka DevTools bisa memanggil listAccounts() sendiri
+// tanpa peduli username-nya siapa.
+//
+// Yang benar-benar menjaga data adalah Firestore Security Rules. Berkas
+// firestore.rules di repo ini berisi aturan yang menegakkannya di sisi server;
+// selama aturan itu belum dipasang di Firebase Console, panel ini akan ditolak
+// Firestore -- dan itu memang perilaku yang benar.
+const ADMIN_USERNAME = "admin";
+
+export function isAdmin() {
+  return usernameKey(account?.username) === ADMIN_USERNAME;
+}
+
+// Daftar seluruh akun terdaftar. Hanya berhasil kalau aturan Firestore
+// mengizinkan admin membaca koleksi users.
+export async function listAccounts() {
+  const snap = await getDocs(collection(db, "users"));
+
+  return snap.docs
+    .map((d) => ({ uid: d.id, ...d.data() }))
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+}
+
+// Seluruh profil sebuah akun beserta riwayat tontonannya.
+//
+// Riwayat tiap profil diambil bersamaan, bukan berurutan: satu akun bisa punya
+// empat profil, dan menunggu satu per satu membuat panelnya terasa menggantung
+// tanpa alasan.
+export async function accountActivity(uid) {
+  const snap = await getDocs(collection(db, "users", uid, "profiles"));
+
+  const profil = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  return Promise.all(
+    profil.map(async (p) => {
+      const riwayat = await getDocs(collection(db, "users", uid, "profiles", p.id, "history"));
+
+      return {
+        ...p,
+        history: riwayat.docs
+          .map((d) => d.data())
+          .sort((a, b) => String(b.watchedAt).localeCompare(String(a.watchedAt))),
+      };
+    })
+  );
+}
+
 // ---------- Profil ----------
 function profileRef(id) {
   return doc(db, "users", account.uid, "profiles", id);
