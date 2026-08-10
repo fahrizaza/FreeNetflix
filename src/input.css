@@ -155,8 +155,7 @@
 }
 
 .player-controls:hover,
-.player-controls:focus-within,
-.player-controls.is-awake {
+.player-controls:focus-within {
   opacity: 1;
 }
 

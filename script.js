@@ -434,7 +434,23 @@ function validImdbId(id) {
 // string apa adanya ke player di dalamnya, jadi param baru cukup ditambah di
 // sini -- tapi hanya berpengaruh kalau player-nya memang membaca param itu.
 // Contoh kalau nanti ketemu nama param kualitas yang benar: quality: 1080
-const PLAYER_PARAMS = { autoplay: 1 };
+const PLAYER_PARAMS = {
+  autoplay: 1,
+
+  // Pemutar mencari sendiri subtitle di OpenSubtitles lalu mengaktifkan yang
+  // bahasanya cocok. "id" = Indonesia (ISO 639-1).
+  //
+  // Parameternya hanya menerima SATU bahasa, jadi "Indonesia, kalau tidak ada
+  // Inggris" tidak bisa dinyatakan di sini. Yang terjadi kalau subtitle
+  // Indonesia tidak ada: tidak ada yang aktif otomatis, tapi bahasa lain tetap
+  // terdaftar di menu subtitle pemutar dan bisa dipilih sendiri.
+  ds_lang: "id",
+
+  // Judul di dalam pemutar dimatikan. Kita sudah menampilkan judul dan nomor
+  // episode sendiri di strip tombol, dan dua judul menumpuk di pojok yang
+  // berdekatan hanya jadi berantakan.
+  showTitle: false,
+};
 
 // Film  : https://streamimdb.ru/embed/movie/tt15398776?autoplay=1
 // Serial : https://streamimdb.ru/embed/tv/tt0903747/2/5?autoplay=1  (season/episode)
@@ -1347,13 +1363,45 @@ let firstEpisode = null;
 
 // Episode terakhir yang tercatat di riwayat untuk sebuah serial. Dipakai
 // supaya tombol Play melanjutkan, bukan mengulang dari episode pertama.
+// Sisa waktu di bawah ini dianggap episodenya sudah habis. Penonton umumnya
+// keluar begitu credit mulai, jadi menawarkan "lanjutkan menit 17 dari 20"
+// hampir selalu bukan yang ia mau -- yang ia mau episode berikutnya.
+const SISA_DIANGGAP_SELESAI = 180;
+
+// Sudah tamatkah episode yang terakhir ditonton?
+//
+// Dua bentuk "sudah tamat" yang harus dikenali:
+//   1. posisinya tinggal sedikit dari akhir
+//   2. posisinya nol PADAHAL yang tertonton hampir sepanjang episodenya --
+//      ini ulah NEAR_END di pemutar, yang sengaja menolkan posisi saat sudah
+//      di ujung supaya pemutaran berikutnya tidak langsung mendarat di credit
+function episodeSudahHabis(entry, runtimeMin) {
+  const total = entry.durationSec || (runtimeMin || 0) * 60;
+  if (!total) return false; // tidak tahu panjangnya = jangan berasumsi
+
+  const posisi = entry.progressSec || 0;
+  if (posisi > 0) return total - posisi <= SISA_DIANGGAP_SELESAI;
+
+  return (entry.watchedSec || 0) >= total - SISA_DIANGGAP_SELESAI;
+}
+
 function resumeEpisode(item) {
   if (item.type !== "SHOW") return null;
 
   const last = historyById(item.id);
   if (!last || !last.season || !last.episode) return null;
 
-  return { season: Number(last.season), number: Number(last.episode) };
+  const ep = { season: Number(last.season), number: Number(last.episode) };
+
+  // Sudah tamat -> tawarkan episode berikutnya, bukan mengulang yang barusan.
+  // Kalau ini episode terakhir dan tidak ada lanjutannya, biarkan menunjuk
+  // episode itu sendiri; menawarkan mengulang lebih baik daripada tombol Play
+  // yang tidak tahu harus ke mana.
+  if (episodeSudahHabis(last, item.runtime)) {
+    return episodeSetelah(item, ep) || ep;
+  }
+
+  return ep;
 }
 
 function episodeRow(item, ep) {
@@ -1495,13 +1543,32 @@ function closeDetail() {
 }
 
 // ---------- Player fullscreen ----------
-let barTimer = null;
-
 // "full" = menutupi layar, "mini" = jendela kecil di pojok sambil menjelajah
 let playerMode = "full";
 
-// dipasang openPlayer, dipakai setPlayerMode saat membesarkan lagi
-let showPlayerBar = null;
+// Episode yang akan diputar tombol "Next To", atau null kalau ini film atau
+// episode terakhir.
+let nextUp = null;
+let nextTimer = null;
+
+// Durasi terakhir yang dikabarkan pemutar. Disimpan supaya sisa waktu bisa
+// dihitung kapan saja, bukan hanya pada detik kabar itu datang -- tombolnya
+// dipicu oleh gerakan kursor, yang waktunya tidak ada hubungannya dengan
+// jadwal kabar posisi.
+let lastDuration = 0;
+
+// Berapa lama tombolnya menetap setelah dipanggil.
+const NEXT_VISIBLE_MS = 5000;
+
+// Sisa waktu di bawah ini dianggap "sudah mau selesai" -- kira-kira sepanjang
+// credit dan outro pada umumnya.
+//
+// CATATAN JUJUR: pemutar embed tidak memberi tahu di mana outro dimulai. Tidak
+// ada data bab atau penanda adegan di kabar yang kita terima, jadi satu-satunya
+// yang bisa dipakai adalah sisa waktu. Kalau outro sebuah serial jauh lebih
+// panjang atau pendek dari ini, tombolnya akan meleset -- itu batas datanya,
+// bukan sesuatu yang bisa diakali.
+const NEXT_AT_SEC = 150;
 
 function requestFullscreen(el) {
   const fn = el.requestFullscreen || el.webkitRequestFullscreen;
@@ -1574,7 +1641,8 @@ const MIN_PROGRESS_SEC = 30;
 const PROGRESS_STEP_SEC = 5;
 
 let nowPlaying = null; // { item, ep } yang sedang diputar
-let lastSavedSec = 0;
+let lastSavedSec = 0; // posisi saat terakhir DITULIS -- milik saringan Firestore
+let lastReportedSec = 0; // posisi terakhir yang DIKABARKAN -- untuk hitung sisa waktu
 let progressLogged = false;
 
 function savedPosition(item, ep) {
@@ -1635,6 +1703,16 @@ window.addEventListener("message", (e) => {
   }
 
   if (status !== "playing" && status !== "paused") return;
+
+  // Dicatat di luar saringan di bawah, dan WAJIB di variabel sendiri.
+  //
+  // lastSavedSec itu milik saringan penulisan Firestore -- ia menjawab "sudah
+  // berapa jauh sejak terakhir disimpan". Kalau posisi terbaru ditulis ke sana
+  // di sini, saringan itu jadi membandingkan angka dengan dirinya sendiri,
+  // selisihnya selalu nol, dan posisi tontonan tidak akan pernah tersimpan lagi.
+  lastDuration = duration;
+  lastReportedSec = seconds;
+
   if (seconds < MIN_PROGRESS_SEC) return;
 
   // jeda adalah titik simpan yang wajar, jadi ia melewati saringan langkah
@@ -1726,36 +1804,60 @@ function openPlayer(item, ep = null) {
          diklik untuk dibesarkan lagi. -->
     <div data-shield class="absolute inset-0 z-10 hidden cursor-pointer"></div>
 
-    <!-- Judul dan keterangan boleh menghilang sendiri setelah beberapa detik;
-         yang tidak boleh hilang cuma tombol keluar, dan itu ada di lapisan
-         terpisah di bawah ini. Padding kiri disisakan selebar tombol itu. -->
-    <!-- pl harus melewati kedua tombol di lapisan kontrol, kalau tidak judulnya
-         tertimpa: 12px tepi + 44 + 8 + 44 = 108px (di sm jadi 112px) -->
-    <div data-bar class="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center bg-gradient-to-b from-black/90 via-black/50 to-transparent py-3 pl-28 pr-3 transition-opacity duration-300 sm:py-4 sm:pl-32 sm:pr-4">
-      <div class="min-w-0">
-        <p class="truncate text-sm font-semibold sm:text-base">${esc(item.title)}</p>
-        <p class="truncate text-[11px] text-neutral-400 sm:text-xs">
-          ${ep ? `S${ep.season}:E${ep.number} &middot; ` : ""}${esc(item.year)} &middot; ${duration(item)}
-        </p>
-      </div>
-    </div>
+    <!-- Judul ikut di strip ini, bukan di bilah tersendiri yang menghilang
+         sendiri setelah beberapa detik.
 
-    <!-- Tombol keluar dan kecilkan: SELALU tampak, tidak pernah ikut
-         menghilang bersama bilah judul. Sengaja hanya lambang tanpa tulisan
-         dan setengah tembus pandang supaya tidak mencuri perhatian dari
-         filmnya; begitu disentuh, di-hover, atau disorot remote, ia jadi
-         pekat lagi. z-30 menaruhnya di atas bilah judul. -->
-    <div data-controls class="player-controls absolute left-3 top-3 z-30 flex items-center gap-2 sm:left-4 sm:top-4">
+         Bilah lama itu sudah dibuang: peristiwa tetikus di atas iframe lintas-
+         domain tidak pernah sampai ke halaman induk, jadi begitu kursor masuk
+         ke area film, tidak ada satu pun sinyal yang bisa memanggilnya kembali.
+         Ia tampil tiga detik lalu hilang selamanya -- itu bukan bilah yang
+         menyembunyikan diri, itu bilah yang mati.
+
+         Setengah tembus pandang supaya tidak mencuri perhatian dari filmnya,
+         dan jadi pekat begitu di-hover, disentuh, atau disorot remote. -->
+    <!-- max-w memakai garis bawah sebagai spasi: di dalam calc(), tanda minus
+         WAJIB diapit spasi, dan tanpa itu Tailwind tidak mengompilasi kelasnya
+         sama sekali -- judul panjang akan mendorong strip ini keluar layar
+         tanpa satu pun galat yang terlihat. -->
+    <div data-controls class="player-controls absolute left-3 top-3 z-30 flex max-w-[calc(100%_-_1.5rem)] items-center gap-2 sm:left-4 sm:top-4 sm:max-w-[calc(100%_-_2rem)]">
       <button type="button" data-back title="Kembali" aria-label="Kembali"
-        class="flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-xl leading-none backdrop-blur-sm">
+        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 text-xl leading-none backdrop-blur-sm">
         &#8592;
       </button>
 
       <button type="button" data-min title="Kecilkan (M)" aria-label="Kecilkan"
-        class="flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-lg leading-none backdrop-blur-sm">
+        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 text-lg leading-none backdrop-blur-sm">
         &#8600;
       </button>
+
+      <div class="min-w-0 rounded-2xl bg-black/60 px-3 py-1.5 backdrop-blur-sm">
+        <p class="truncate text-sm font-semibold leading-tight">${esc(item.title)}</p>
+        <p data-sub class="truncate text-[11px] leading-tight text-neutral-400">
+          ${ep ? `S${ep.season}:E${ep.number} &middot; ` : ""}${esc(item.year)}
+        </p>
+      </div>
     </div>
+
+    <!-- Zona pemicu tak terlihat di pojok kanan atas.
+
+         Gerakan kursor dan sentuhan di atas area film TIDAK PERNAH sampai ke
+         kita -- itu iframe lintas-domain, peristiwanya jadi milik dokumen di
+         dalamnya. Jadi "muncul saat pengguna menggerakkan kursor" hanya bisa
+         diwujudkan di petak yang benar-benar kita miliki sendiri.
+
+         Ditaruh persis di tempat tombolnya akan muncul, dan sengaja kecil:
+         semakin luas, semakin besar kemungkinan ia menelan ketukan yang
+         sebenarnya ditujukan ke tombol pemutar di baliknya. -->
+    <div data-hotzone class="absolute right-0 top-0 z-20 h-20 w-52 sm:h-24 sm:w-64"></div>
+
+    <!-- Berlawanan dengan tombol kembali di pojok kiri atas. Putih pekat, bukan
+         samar seperti tombol keluar: yang ini memang harus menonjol saat
+         dipanggil. -->
+    <button type="button" data-next
+      class="absolute right-3 top-3 z-30 hidden max-w-[calc(100%_-_1.5rem)] items-center gap-2 rounded bg-white px-4 py-2.5 text-sm font-bold text-black shadow-2xl transition hover:bg-white/85 sm:right-4 sm:top-4">
+      <span data-next-label class="truncate">Next To</span>
+      <span class="shrink-0">&#8250;</span>
+    </button>
 
     <div data-minibar class="absolute inset-x-0 bottom-0 z-20 hidden items-center gap-1 bg-gradient-to-t from-black/95 via-black/70 to-transparent px-2 pb-1 pt-6">
       <p class="min-w-0 flex-1 truncate text-xs font-semibold">${esc(item.title)}</p>
@@ -1770,48 +1872,150 @@ function openPlayer(item, ep = null) {
     </div>
   `;
 
-  const bar = el.querySelector("[data-bar]");
-  const controls = el.querySelector("[data-controls]");
-
-  showPlayerBar = (autoHide = true) => {
-    if (playerMode === "mini") return; // bilah besar memang tidak dipakai di sana
-
-    bar.classList.remove("opacity-0");
-    controls.classList.add("is-awake"); // ikut pekat selagi bilahnya tampak
-    clearTimeout(barTimer);
-
-    if (autoHide) {
-      barTimer = setTimeout(() => {
-        bar.classList.add("opacity-0");
-        // tombolnya tidak ikut hilang, hanya kembali samar
-        controls.classList.remove("is-awake");
-      }, 3000);
-    }
-  };
-
   el.querySelector("[data-back]").onclick = () => closePlayer();
   el.querySelector("[data-shut]").onclick = () => closePlayer();
   el.querySelector("[data-min]").onclick = () => setPlayerMode("mini");
   el.querySelector("[data-max]").onclick = () => setPlayerMode("full");
   el.querySelector("[data-shield]").onclick = () => setPlayerMode("full");
 
-  // Kedua pendengar ini hanya menyala selama kursor belum masuk ke iframe.
-  // Begitu masuk, peristiwanya jadi milik dokumen di dalam iframe dan tidak
-  // pernah sampai ke sini lagi -- karena itu tombol keluar tidak boleh
-  // bergantung padanya untuk tetap terlihat.
-  el.addEventListener("mousemove", () => showPlayerBar());
-  el.addEventListener("touchstart", () => showPlayerBar(), { passive: true });
+  // Episode berikutnya dicari sekarang, bukan nanti saat tombolnya mau muncul:
+  // saat itu penonton sudah di detik-detik akhir dan tidak boleh menunggu.
+  nextUp = null;
+  el.querySelector("[data-next]").onclick = () => {
+    if (nextUp) openPlayer(item, nextUp);
+  };
+  siapkanEpisodeBerikutnya(item, ep);
 
-  // Satu-satunya bagian yang masih bisa mendeteksi kursor saat film menutupi
-  // layar adalah tombol ini sendiri. Mengarahkan kursor ke sana memunculkan
-  // kembali judulnya -- tanpa ini, judul yang sudah menghilang tidak akan
-  // pernah bisa dipanggil lagi dengan tetikus.
-  controls.addEventListener("pointerenter", () => showPlayerBar());
+  // Tiga pemicu, dan ketiganya memakai petak yang benar-benar kita miliki --
+  // satu-satunya tempat yang peristiwanya tidak ditelan iframe.
+  const zona = el.querySelector("[data-hotzone]");
+  zona.addEventListener("pointerenter", bangunkanTombolNext); // kursor mendekat
+  zona.addEventListener("pointerdown", bangunkanTombolNext); // ketukan di ponsel
+  el.querySelector("[data-controls]").addEventListener("pointerenter", bangunkanTombolNext);
 
   setPlayerMode("full");
 
   // supaya tombol back browser menutup player, bukan meninggalkan halaman
   history.pushState({ netflixPlayer: true }, "");
+}
+
+// Episode setelah yang sedang diputar: nomor berikutnya di season yang sama,
+// atau episode pertama season berikutnya kalau ini episode terakhir.
+//
+// Jumlah episode diambil dari item.seasons yang sudah dibawa fetchDetail, jadi
+// tidak ada request tambahan. Kalau datanya belum ada -- misalnya pemutar
+// dibuka lewat jalur yang tidak melewati modal -- daftar episodenya ditarik
+// sekali untuk memastikan, karena menebak bisa berarti menawarkan episode yang
+// tidak ada.
+// Bagian murninya: episode setelah ep, dihitung dari item.seasons saja.
+// Dipakai dua tempat -- tombol di pemutar dan tombol Play di modal -- supaya
+// keduanya tidak pernah menunjuk episode yang berbeda.
+//
+// jumlah boleh dioper kalau pemanggilnya sudah tahu banyaknya episode; kalau
+// tidak, diambil dari item.seasons. Nol berarti tidak diketahui, dan menebak
+// lebih buruk daripada tidak menawarkan apa-apa.
+function episodeSetelah(item, ep, jumlah = 0) {
+  if (item.type !== "SHOW" || !ep) return null; // film tidak punya episode berikutnya
+
+  const seasons = item.seasons || [];
+  const total = jumlah || seasons.find((s) => s.number === ep.season)?.count || 0;
+  if (!total) return null;
+
+  if (ep.number < total) return { season: ep.season, number: ep.number + 1 };
+
+  const urutan = seasons.findIndex((s) => s.number === ep.season);
+  const berikut = urutan >= 0 ? seasons[urutan + 1] : null;
+  return berikut ? { season: berikut.number, number: 1 } : null;
+}
+
+async function siapkanEpisodeBerikutnya(item, ep) {
+  if (item.type !== "SHOW" || !ep) return;
+
+  const seasons = item.seasons || [];
+  let jumlah = seasons.find((s) => s.number === ep.season)?.count || 0;
+
+  if (!jumlah) {
+    try {
+      jumlah = (await fetchSeason(item.tmdbId, ep.season)).length;
+    } catch {
+      return; // tidak tahu = jangan menawarkan apa pun
+    }
+  }
+
+  // pemutar sudah pindah ke judul lain selagi kita mencari
+  if (nowPlaying?.item?.id !== item.id) return;
+
+  nextUp = episodeSetelah(item, ep, jumlah);
+  if (nextUp) namaiTombolNext(item, nextUp);
+}
+
+// Mengisi tulisan tombolnya dengan judul episode -- "Next To Ozymandias" jauh
+// lebih memberi tahu daripada "Next To S5:E14".
+//
+// fetchSeason sudah punya cache, jadi episode di season yang sama tidak menembak
+// TMDB lagi. Kalau gagal, nomor episodenya tetap dipakai; tombolnya tidak boleh
+// batal muncul hanya karena namanya tidak ketemu.
+async function namaiTombolNext(item, target) {
+  const singkat = `S${target.season}:E${target.number}`;
+  const tulis = (teks) => {
+    const label = document.getElementById("player").querySelector("[data-next-label]");
+    if (label && nextUp === target) label.textContent = `Next To ${teks}`;
+  };
+
+  tulis(singkat);
+
+  try {
+    const eps = await fetchSeason(item.tmdbId, target.season);
+    const ketemu = eps.find((e) => e.number === target.number);
+    if (ketemu?.name) tulis(`${singkat} ${ketemu.name}`);
+  } catch {
+    /* nomornya saja sudah cukup */
+  }
+}
+
+// Apakah sekarang memang waktunya menawarkan episode berikutnya.
+//
+// Durasi dari pemutar dipakai lebih dulu; kalau kabarnya tidak membawa durasi,
+// runtime TMDB jadi patokan (untuk serial angkanya memang per episode). Tanpa
+// keduanya sisa waktu tidak bisa dihitung, dan tombolnya tidak pernah
+// ditawarkan -- lebih baik absen daripada muncul di tengah episode.
+function waktunyaEpisodeBerikutnya() {
+  if (!nextUp || playerMode !== "full") return false;
+
+  const total = lastDuration > 0 ? lastDuration : (nowPlaying?.item?.runtime || 0) * 60;
+  return total > 0 && total - lastReportedSec <= NEXT_AT_SEC;
+}
+
+// Menampilkan tombolnya sebentar. Dipanggil hanya oleh gerakan atau ketukan
+// yang benar-benar sampai ke kita, bukan oleh jalannya waktu -- tombolnya tidak
+// boleh menyembul sendiri menutupi film.
+function bangunkanTombolNext() {
+  const tombol = document.getElementById("player").querySelector("[data-next]");
+  if (!tombol) return;
+
+  clearTimeout(nextTimer);
+
+  if (!waktunyaEpisodeBerikutnya()) {
+    tombol.classList.add("hidden");
+    tombol.classList.remove("flex");
+    return;
+  }
+
+  tombol.classList.remove("hidden");
+  tombol.classList.add("flex");
+
+  // Menghilang lagi sendiri supaya tidak menetap di pojok sepanjang credit.
+  nextTimer = setTimeout(() => {
+    tombol.classList.add("hidden");
+    tombol.classList.remove("flex");
+  }, NEXT_VISIBLE_MS);
+}
+
+function sembunyikanTombolNext() {
+  clearTimeout(nextTimer);
+  const tombol = document.getElementById("player")?.querySelector("[data-next]");
+  tombol?.classList.add("hidden");
+  tombol?.classList.remove("flex");
 }
 
 // ---------- Besar / kecil ----------
@@ -1834,16 +2038,17 @@ function setPlayerMode(mode) {
   };
 
   show("[data-shield]", mini);
-  show("[data-bar]", !mini, "flex");
   show("[data-minibar]", mini, "flex");
 
   // di jendela sekecil itu tombol keluar tidak muat; minibar punya tombolnya
   // sendiri yang sudah pas ukurannya
   show("[data-controls]", !mini, "flex");
 
-  if (mini) {
-    clearTimeout(barTimer);
+  // Tombol episode berikutnya disembunyikan tiap kali mode berpindah; ia hanya
+  // boleh kembali lewat gerakan atau ketukan pengguna, bukan sendirinya.
+  sembunyikanTombolNext();
 
+  if (mini) {
     // Layar harus bebas berputar lagi begitu pemutarnya mengecil -- halaman di
     // baliknya dibaca tegak, dan mengunci mendatar akan menyandera seluruh
     // situs demi jendela sebesar kartu nama.
@@ -1858,7 +2063,6 @@ function setPlayerMode(mode) {
   // urutannya penting: Android baru mengizinkan kunci orientasi setelah layar
   // penuh benar-benar aktif, jadi menunggu janjinya dulu
   requestFullscreen(el).then(lockLandscape);
-  showPlayerBar?.();
 }
 
 function togglePlayerMode() {
@@ -1869,7 +2073,6 @@ function closePlayer(fromPopstate = false) {
   const el = document.getElementById("player");
   if (el.classList.contains("hidden")) return;
 
-  clearTimeout(barTimer);
   el.className = "hidden";
   el.innerHTML = ""; // menghapus iframe = playback berhenti
 
@@ -1879,7 +2082,10 @@ function closePlayer(fromPopstate = false) {
   exitFullscreen();
 
   playerMode = "full"; // pemutaran berikutnya selalu mulai besar
-  showPlayerBar = null;
+  clearTimeout(nextTimer);
+  nextUp = null;
+  lastDuration = 0;
+  lastReportedSec = 0;
   nowPlaying = null;
 
   // posisi terakhir ditulis sekarang, lalu barisnya digambar ulang supaya bilah
@@ -3830,6 +4036,24 @@ Auth.onAuth((account) => {
   // belum punya profil sama sekali -> langsung ke pembuatan
   if (!list.length) {
     profileForm();
+    return;
+  }
+
+  // Satu profil berarti tidak ada yang perlu dipilih. Menampilkan layar "Siapa
+  // yang menonton?" berisi satu kartu hanya menambah satu klik tanpa memberi
+  // pilihan apa pun.
+  //
+  // Yang ber-PIN tetap harus melewati layar PIN, bukan langsung masuk. Ini
+  // persis lubang yang dulu ditutup: muat ulang halaman tidak boleh jadi jalan
+  // pintas melewati kunci profil.
+  //
+  // Sengaja hanya berlaku di sini, bukan di profilePicker() -- kalau di sana,
+  // tombol "Ganti Profil" akan memantul kembali ke profil yang sama dan jadi
+  // tidak ada gunanya.
+  if (list.length === 1) {
+    const satu = list[0];
+    if (Auth.hasPin(satu)) pinScreen(satu);
+    else enterApp(satu.id);
     return;
   }
 
