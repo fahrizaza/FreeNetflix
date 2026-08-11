@@ -454,7 +454,7 @@ const PLAYER_PARAMS = {
 
 // Film  : https://streamimdb.ru/embed/movie/tt15398776?autoplay=1
 // Serial : https://streamimdb.ru/embed/tv/tt0903747/2/5?autoplay=1  (season/episode)
-function playerUrl(item, ep = null, resumeAt = 0) {
+function playerUrl(item, ep = null, resumeAt = 0, sub = null) {
   if (!validImdbId(item.imdbId)) return "";
 
   const id = item.imdbId.trim();
@@ -464,12 +464,132 @@ function playerUrl(item, ep = null, resumeAt = 0) {
   // memulai dari sana, yang tidak akan memulai dari awal seperti biasa
   if (resumeAt > 0) query.set("resumeAt", Math.round(resumeAt));
 
+  // Subtitle yang kita carikan sendiri. Dipasang sebagai trek bawaan supaya
+  // langsung menyala, tidak perlu dipilih dulu dari menu pemutar.
+  if (sub?.url) {
+    query.set("sub_url", sub.url);
+    query.set("sub_lang", sub.lang);
+    query.set("sub_label", sub.label);
+    query.set("sub_default", "true");
+  }
+
   if (item.type === "SHOW") {
     const path = ep ? `tv/${id}/${ep.season}/${ep.number}` : `tv/${id}`;
     return `${PLAYER}/${path}?${query}`;
   }
 
   return `${PLAYER}/movie/${id}?${query}`;
+}
+
+// ---------- Subtitle ----------
+// Pemutar embed sebenarnya sudah mencari subtitle sendiri lewat ds_lang, tapi
+// parameter itu hanya menerima SATU bahasa -- tidak ada cara menyatakan
+// "Indonesia, kalau tidak ada Inggris". Di sini kita cari sendiri berurutan,
+// lalu hasilnya dioper ke pemutar lewat sub_url.
+//
+// BELUM AKTIF SAMPAI KUNCINYA DIISI. Selama SUB_API_KEY kosong, cariSubtitle
+// langsung mengembalikan null tanpa menyentuh jaringan -- jadi pemutaran
+// berjalan persis seperti sebelum fitur ini ada, tanpa jeda sedetik pun.
+//
+// Kunci gratis (1.000 permintaan/hari): https://store.wyzie.io/redeem
+const SUB_API_KEY = "wyzie-whxtvdo3lqagkm110e5z3vmc006lfpqh";
+
+const SUB_ENDPOINT = "https://sub.wyzie.io/search";
+
+// Urutan pencarian. Yang pertama ketemu dipakai.
+const SUB_BAHASA = [
+  { kode: "id", label: "Indonesia" },
+  { kode: "en", label: "English" },
+];
+
+// Pemutar tidak boleh tertahan lama hanya demi subtitle. Lewat batas ini,
+// filmnya tetap diputar tanpa subtitle -- menonton tanpa teks jauh lebih baik
+// daripada menunggu layar hitam.
+const SUB_TIMEOUT_MS = 2500;
+
+const subCache = new Map();
+
+// Bentuk respons Wyzie tidak bisa saya pastikan tanpa kunci (dokumentasinya
+// SPA dan sumbernya sudah ditutup), jadi pembacaan di bawah sengaja longgar:
+// ia menerima array maupun objek berbungkus, dan mengambil field pertama yang
+// isinya tampak seperti URL berkas subtitle.
+//
+// Respons pertama dicetak sekali ke console supaya bentuk aslinya bisa dilihat
+// dan pembacaan ini dipersempit kalau perlu.
+let subLogged = false;
+
+function bacaHasilSubtitle(data) {
+  const daftar = Array.isArray(data) ? data : data?.results || data?.data || data?.subtitles || [];
+  if (!Array.isArray(daftar)) return "";
+
+  for (const entri of daftar) {
+    if (typeof entri === "string" && /^https?:\/\//.test(entri)) return entri;
+
+    for (const nilai of Object.values(entri || {})) {
+      if (typeof nilai === "string" && /^https?:\/\/\S+/.test(nilai) && /\.(srt|vtt)/i.test(nilai)) {
+        return nilai;
+      }
+    }
+  }
+
+  return "";
+}
+
+async function cariSubtitle(item, ep = null) {
+  if (!SUB_API_KEY || !validImdbId(item.imdbId)) return null;
+
+  const kunci = `${item.imdbId}-${ep ? `${ep.season}-${ep.number}` : "movie"}`;
+  if (subCache.has(kunci)) return subCache.get(kunci);
+
+  // Batas waktunya menyelimuti SELURUH pencarian, bukan tiap bahasa sendiri --
+  // kalau tidak, dua bahasa yang sama-sama lambat menahan pemutar dua kali
+  // lebih lama dari yang dijanjikan.
+  const batal = new AbortController();
+  const jam = setTimeout(() => batal.abort(), SUB_TIMEOUT_MS);
+
+  let hasil = null;
+
+  try {
+    for (const bahasa of SUB_BAHASA) {
+      const query = new URLSearchParams({
+        id: item.imdbId.trim(),
+        language: bahasa.kode,
+        key: SUB_API_KEY,
+      });
+
+      if (ep) {
+        query.set("season", ep.season);
+        query.set("episode", ep.number);
+      }
+
+      const res = await fetch(`${SUB_ENDPOINT}?${query}`, { signal: batal.signal });
+      if (!res.ok) continue;
+
+      const data = await res.json();
+
+      if (!subLogged) {
+        subLogged = true;
+        console.debug("Respons subtitle pertama:", data);
+      }
+
+      const url = bacaHasilSubtitle(data);
+      if (url) {
+        hasil = { url, lang: bahasa.kode, label: bahasa.label };
+        break;
+      }
+    }
+  } catch (err) {
+    // batas waktu terlampaui atau jaringan bermasalah -- bukan alasan
+    // menggagalkan pemutaran
+    if (err?.name !== "AbortError") console.error("Pencarian subtitle gagal", err);
+  } finally {
+    clearTimeout(jam);
+  }
+
+  // Yang tidak ketemu pun disimpan, supaya judul tanpa subtitle tidak
+  // menahan pemutar berulang kali setiap kali ditonton.
+  subCache.set(kunci, hasil);
+  return hasil;
 }
 
 // ---------- Daftar episode ----------
@@ -1783,7 +1903,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) Auth.flushProgress();
 });
 
-function openPlayer(item, ep = null) {
+async function openPlayer(item, ep = null) {
   // Garis pertahanan terakhir. Semua baris memang sudah disaring, tapi pemutar
   // adalah satu-satunya pintu yang benar-benar menayangkan sesuatu -- kalau ada
   // jalur yang terlewat, di sinilah ia harus berhenti, bukan di tengah film.
@@ -1792,9 +1912,15 @@ function openPlayer(item, ep = null) {
     return;
   }
 
+  // Subtitle harus sudah ada SEBELUM iframe dibuat: sub_url adalah parameter
+  // URL, dan mengubahnya nanti berarti memuat ulang iframe -- filmnya akan
+  // mengulang dari awal. Jadi ditunggu di sini, dengan batas waktu, dan
+  // langsung nihil kalau kuncinya belum diisi.
+  const sub = await cariSubtitle(item, ep);
+
   // posisi dibaca sebelum recordPlay, karena recordPlay ikut menyentuh entri
   // riwayat yang sama
-  const url = playerUrl(item, ep, savedPosition(item, ep));
+  const url = playerUrl(item, ep, savedPosition(item, ep), sub);
   if (!url) return;
 
   // trailer di modal dan video hero dihentikan dulu, kalau tidak suaranya
@@ -2468,12 +2594,27 @@ function isCam(item) {
   return item.providersLoaded && item.providers.length === 0;
 }
 
+// Judul lama disembunyikan hanya kalau penonton menyalakannya sendiri.
+//
+// Tahun kosong dianggap LOLOS, bukan lama. TMDB kadang tidak punya tanggal
+// rilis, dan membuang judul yang tahunnya tidak diketahui berarti menghukum
+// data yang tidak lengkap -- bukan itu yang diminta penonton saat ia bilang
+// "sembunyikan film lama".
+const TAHUN_MINIMAL = 2000;
+
+function tahunLolos(item) {
+  if (!Auth.settings().hideOld) return true;
+
+  const tahun = Number(item.year);
+  return !tahun || tahun >= TAHUN_MINIMAL;
+}
+
 async function filterSearch(items) {
   const { showNoThumb, showCam } = Auth.settings();
 
   // saringan gratis dulu, jadi yang berbayar (satu request per judul) hanya
   // dijalankan untuk sisa yang benar-benar akan ditampilkan
-  let kept = showNoThumb ? items : items.filter(hasThumb);
+  let kept = (showNoThumb ? items : items.filter(hasThumb)).filter(tahunLolos);
 
   if (!showCam) {
     await Promise.all(kept.map(fetchProviders));
@@ -2758,6 +2899,12 @@ async function runQueue(rows) {
         }
         items = lolos;
       }
+
+      // Disaring di sini, bukan lewat parameter tanggal ke TMDB: beberapa baris
+      // sudah memakai primary_release_date.gte sendiri (mis. "Trending Now"
+      // yang dibatasi 6 bulan terakhir), dan menempelkan parameter kedua yang
+      // sama membuat TMDB memilih salah satunya tanpa bisa ditebak.
+      items = items.filter(tahunLolos);
 
       // hasil basi dari profil sebelumnya tidak boleh ditulis
       if (token !== rowsToken || Auth.maturityLimit() !== limit) return;
@@ -3841,6 +3988,12 @@ function settingsScreen() {
               "Judul yang belum ada di layanan streaming mana pun di Indonesia. Yang beredar umumnya rekaman bioskop: gambar dan suaranya buruk.",
               current.showCam
             )}
+            ${toggle(
+              "data-old",
+              `Sembunyikan film sebelum ${TAHUN_MINIMAL}`,
+              `Judul yang rilis sebelum ${TAHUN_MINIMAL} tidak ikut tampil di beranda maupun hasil pencarian. Yang sudah ada di My List dan riwayat tetap dibiarkan. Judul yang tahun rilisnya tidak diketahui tetap tampil.`,
+              current.hideOld
+            )}
           </div>
 
           <p data-note class="mt-4 min-h-5 text-xs text-neutral-500"></p>
@@ -3871,16 +4024,27 @@ function settingsScreen() {
   const note = gate.querySelector("[data-note]");
   let changed = false;
 
-  const bind = (sel, key) => {
+  // Saringan tahun beda dari dua saklar lain: ia ikut menentukan isi baris
+  // beranda, bukan cuma hasil pencarian. Barisnya sudah terlanjur dimuat
+  // dengan saringan lama, jadi harus dibangun ulang -- dan itu mahal, jadi
+  // hanya dilakukan kalau saklar ini yang memang disentuh.
+  let barisPerluDibangunUlang = false;
+
+  const bind = (sel, key, bangunUlang = false) => {
     gate.querySelector(sel).onchange = (e) => {
       Auth.updateSettings({ [key]: e.target.checked });
       changed = true;
-      note.textContent = "Tersimpan. Pencarian terakhir akan diulang saat kembali.";
+      if (bangunUlang) barisPerluDibangunUlang = true;
+
+      note.textContent = bangunUlang
+        ? "Tersimpan. Beranda akan dimuat ulang saat kembali."
+        : "Tersimpan. Pencarian terakhir akan diulang saat kembali.";
     };
   };
 
   bind("[data-nothumb]", "showNoThumb");
   bind("[data-cam]", "showCam");
+  bind("[data-old]", "hideOld", true);
 
   const back = () => {
     if (!Auth.currentProfile()) {
@@ -3889,6 +4053,8 @@ function settingsScreen() {
     }
 
     showApp();
+
+    if (barisPerluDibangunUlang) resetSections();
 
     // hasil yang sedang tampil masih memakai saringan lama, jadi dicari ulang
     const box = document.getElementById("search-input");

@@ -1,0 +1,54 @@
+Query Parameters
+
+All embed endpoints support the following optional query parameters for customization.
+
+UI & COLORS
+PARAMETER	TYPE	DESCRIPTION
+color / primaryColor	Hex	Primary UI color (e.g., #ff0000)
+TITLE & DISPLAY
+PARAMETER	TYPE	DESCRIPTION
+title	String	Custom title displayed in the player (URL encoded)
+poster	URL	Custom poster/thumbnail image URL
+showTitle	Boolean	Show or hide the title overlay (default: true)
+PLAYBACK
+PARAMETER	TYPE	DESCRIPTION
+autoplay	0 / 1	Force autoplay on (1) or off (0). When omitted, the domain-level autoplay setting is used. Note: browsers may block unmuted autoplay; the player will fall back to muted autoplay with an unmute prompt.
+startAt	Float	Start playback at specific time (seconds)
+resumeAt	Float	Resume playback from a specific timestamp in seconds (alias for startAt). Useful for resuming where a user left off.
+SUBTITLES
+PARAMETER	TYPE	DESCRIPTION
+sub_url	URL	URL-encoded remote subtitle file (.srt or .vtt). CORS not required — fetched server-side.
+sub_file	URL	Alias for sub_url
+sub_label	String	Subtitle track label
+sub_lang	String	Subtitle language code (default: en)
+sub_default	Boolean	Set subtitle as default track
+ds_lang	String	Default subtitle language for OpenSubtitles auto-search. Accepts ISO 639-1 two-letter codes (e.g. en, de) or OpenSubtitles three-letter codes (e.g. eng, ger). The player will automatically search and activate subtitles in the specified language.
+lang	String	Alias for ds_lang
+REMOTE SUBTITLE EXAMPLES
+MOVIE WITH REMOTE SUBTITLE
+Copy
+https://vaplayer.ru/embed/movie/tt23779058?sub_url=https%3A%2F%2Fexample.com%2Fsubs%2Fmovie.srt
+TV EPISODE WITH SUBTITLE + DEFAULT LANGUAGE
+Copy
+https://vaplayer.ru/embed/tv/1399/1/1?sub_url=https%3A%2F%2Fexample.com%2Fsubs%2Fs01e01.vtt&ds_lang=de
+MOVIE WITH SUBTITLE LABEL AND LANGUAGE
+Copy
+https://vaplayer.ru/embed/movie/385687?sub_url=https%3A%2F%2Fexample.com%2Ffrench.srt&sub_label=French&sub_lang=fr&sub_default=true
+OTHER
+PARAMETER	TYPE	DESCRIPTION
+controls	Boolean	Show or hide the player control bar. Set to false to hide all controls. Also suppresses the hover gradient overlay automatically.
+overlay	Boolean	Show or hide the hover gradient overlay and title area. Set to false to completely disable the darkening overlay that appears when hovering or in fullscreen. Useful when embedding in custom UIs or when controls are disabled.
+thumbnails	URL	Thumbnail preview sprite URL for seek bar
+EXAMPLES WITH PARAMETERS
+ENABLE AUTOPLAY
+Copy
+https://vaplayer.ru/embed/movie/tt23779058?autoplay=1
+DISABLE AUTOPLAY
+Copy
+https://vaplayer.ru/embed/movie/tt23779058?autoplay=0
+AUTOPLAY + RESUME AT TIMESTAMP
+Copy
+https://vaplayer.ru/embed/movie/tt23779058?autoplay=1&resumeAt=300
+FULL EXAMPLE
+Copy
+https://vaplayer.ru/embed/movie/tt23779058?primaryColor=%23e50914&title=My%20Movie&lang=en&autoplay=1

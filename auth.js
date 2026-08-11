@@ -386,6 +386,11 @@ export async function deleteProfile(id) {
 export const DEFAULT_SETTINGS = {
   showNoThumb: false, // tampilkan judul tanpa gambar
   showCam: false, // tampilkan judul yang belum ada di layanan streaming (CAM)
+
+  // Perhatikan arahnya berbeda dari dua di atas: yang ini "sembunyikan", bukan
+  // "tampilkan". Bawaannya false berarti film lama TETAP TAMPIL -- tidak ada
+  // yang disembunyikan sampai penonton sendiri yang menyalakannya.
+  hideOld: false,
 };
 
 export function settings() {
