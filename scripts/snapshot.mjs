@@ -11,7 +11,7 @@
 // dari 20 jam, jadi "sekali sehari" terjadi sendiri selama Anda push.
 // ---------------------------------------------------------------------------
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { SECTIONS, TMDB, TMDB_KEY, normalize, pickLogo } from "../config.mjs";
+import { SECTIONS, TMDB, TMDB_KEY, normalize, pickLogo } from "../config.js";
 
 const KELUARAN = new URL("../data/katalog.json", import.meta.url).pathname;
 

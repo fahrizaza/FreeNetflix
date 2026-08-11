@@ -1,0 +1,39 @@
+# Konfigurasi server untuk LiteSpeed / Apache (hosting cinemahub.my.id).
+# Netlify tidak membaca berkas ini; netlify.toml yang lama abaikan saja.
+
+# ---- Tipe MIME ----
+# LiteSpeed di sini melayani .mjs dan .js sebagai application/octet-stream,
+# dan browser MENOLAK menjalankan modul ES yang bukan tipe JavaScript. Akibatnya
+# satu import saja menggagalkan seluruh script.js -- halaman jadi hitam total.
+# Baris di bawah memaksa tipe yang benar. AddType menimpa apa pun tebakan server.
+AddType application/javascript .js
+AddType application/javascript .mjs
+AddType application/json .json
+
+# ---- Kompresi ----
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css application/javascript application/json image/svg+xml
+</IfModule>
+
+# ---- Cache ----
+# Katalog disegarkan harian, jadi jangan disimpan lama oleh browser.
+<IfModule mod_headers.c>
+  <FilesMatch "\.(js|mjs|css)$">
+    Header set Cache-Control "public, max-age=3600"
+  </FilesMatch>
+  <FilesMatch "katalog\.json$">
+    Header set Cache-Control "public, max-age=1800"
+  </FilesMatch>
+</IfModule>
+
+# ---- SPA fallback ----
+# index.html satu-satunya halaman; JavaScript yang menggambar sisanya. Tanpa ini,
+# membuka /apa-saja langsung (atau menyegarkan halaman dalam) menghasilkan 404.
+# Berkas yang benar-benar ada tetap dilayani apa adanya.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+  RewriteRule ^ index.html [L]
+</IfModule>

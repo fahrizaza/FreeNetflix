@@ -2,9 +2,9 @@
 // dari browser di domain mana pun -- tidak perlu proxy seperti API sebelumnya.
 import * as Auth from "./auth.js";
 
-// Kunci API, daftar baris, dan bentuk baku judul tinggal di config.mjs karena
+// Kunci API, daftar baris, dan bentuk baku judul tinggal di config.js karena
 // dipakai juga oleh scripts/snapshot.mjs (Node) yang mengunduh katalog harian.
-import { TMDB_KEY, TMDB, IMG, REGION, SECTIONS, normalize, pickLogo } from "./config.mjs";
+import { TMDB_KEY, TMDB, IMG, REGION, SECTIONS, normalize, pickLogo } from "./config.js";
 
 const PLAYER = "https://nextgencloudfabric.com/embed";
 const STORAGE_KEY = "netflix:saved";
@@ -106,7 +106,7 @@ async function fetchList(path, forcedType = "") {
   return items;
 }
 
-// normalize dan pickLogo kini tinggal di config.mjs, dipakai bersama skrip
+// normalize dan pickLogo kini tinggal di config.js, dipakai bersama skrip
 // snapshot -- keduanya harus menghasilkan bentuk judul yang persis sama.
 
 // Trailer resmi terbaru diutamakan; teaser dipakai kalau trailer tidak ada.
