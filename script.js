@@ -1686,6 +1686,13 @@ const ICON_MAXIMIZE = strokeIcon(`<path d="M16 8l-9 9m0-5v5h5"/>`, "h-4 w-4");
 const ICON_CLOSE = strokeIcon(`<path d="M6 6l12 12M18 6 6 18"/>`, "h-4 w-4");
 const ICON_NEXT = strokeIcon(`<path d="M9 6l6 6-6 6"/>`, "h-4 w-4");
 
+// Lambang CC, digambar sebagai lencana supaya penonton mengenalinya di antara
+// tombol-tombol pemutar -- bukan sekadar dua huruf yang mengambang.
+const ICON_CC = `<svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+  <rect x="2.5" y="5" width="19" height="14" rx="2.5"/>
+  <path d="M10 10.2a2.6 2.6 0 1 0 0 3.6M17.5 10.2a2.6 2.6 0 1 0 0 3.6" stroke-linecap="round"/>
+</svg>`;
+
 const ICON_MATA = strokeIcon(
   `<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>`
 );
@@ -1909,6 +1916,15 @@ async function openPlayer(item, ep = null) {
   // jalur yang terlewat, di sinilah ia harus berhenti, bukan di tengah film.
   if (!allowedAge(item)) {
     alert(`"${item.title}" di luar batas umur profil ini.`);
+    return;
+  }
+
+  // Penonton baru diberi panduan singkat dulu, SEBELUM iframe dibuat -- kalau
+  // ditumpuk di atas pemutar, filmnya sudah berjalan (dan berbunyi) di belakang
+  // selagi orangnya masih membaca. Setelah ditutup, fungsi ini dipanggil ulang
+  // dengan argumen yang sama dan lolos karena tourSeen sudah tercatat.
+  if (!Auth.settings().tourSeen) {
+    tampilkanPanduan(() => openPlayer(item, ep));
     return;
   }
 
@@ -2180,6 +2196,79 @@ function sembunyikanTombolNext() {
   const tombol = document.getElementById("player")?.querySelector("[data-next]");
   tombol?.classList.add("hidden");
   tombol?.classList.remove("flex");
+}
+
+// ---------- Panduan pertama kali ----------
+// Muncul sekali per profil, sebelum film pertama diputar.
+//
+// Dua hal yang paling sering ditanyakan penonton baru: cara keluar, dan cara
+// menyalakan subtitle. Keduanya tidak terlihat sendiri -- tombol keluar sengaja
+// dibuat samar supaya tidak mengganggu film, dan subtitle butuh beberapa
+// langkah di dalam pemutar yang bukan milik kita.
+//
+// Ditutup lewat onSelesai, bukan menutup diri sendiri: pemanggilnya yang tahu
+// apa yang harus terjadi sesudahnya.
+function tampilkanPanduan(onSelesai) {
+  const langkah = (nomor, isi) => `
+    <li class="flex gap-3">
+      <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-red-600 text-xs font-bold">${nomor}</span>
+      <span class="leading-relaxed">${isi}</span>
+    </li>`;
+
+  const layar = document.createElement("div");
+  layar.className =
+    "fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-black/90 p-4 py-10";
+
+  layar.innerHTML = `
+    <div class="gate-rise w-full max-w-lg rounded-lg bg-[#181818] p-6 shadow-2xl md:p-8">
+      <h2 class="text-xl font-bold md:text-2xl">Sebelum mulai menonton</h2>
+      <p class="mt-1 text-sm text-neutral-400">Dua hal yang sering dicari. Panduan ini hanya muncul sekali.</p>
+
+      <div class="mt-6 rounded border border-neutral-800 bg-black/40 p-4">
+        <p class="flex items-center gap-2 font-semibold">
+          <span class="flex h-9 w-9 items-center justify-center rounded-full bg-black/60">${ICON_BACK}</span>
+          Keluar dari film
+        </p>
+        <p class="mt-2 text-sm leading-relaxed text-neutral-400">
+          Tombol panah ini ada di <span class="text-neutral-200">pojok kiri atas</span> layar
+          selama film berjalan. Sengaja dibuat samar supaya tidak mengganggu, tapi
+          tidak pernah hilang. Di sebelahnya ada tombol untuk mengecilkan pemutar.
+        </p>
+      </div>
+
+      <div class="mt-4 rounded border border-neutral-800 bg-black/40 p-4">
+        <p class="flex items-center gap-2 font-semibold">
+          <span class="flex h-9 w-9 items-center justify-center rounded-full bg-black/60">${ICON_CC}</span>
+          Menyalakan subtitle
+        </p>
+        <ol class="mt-3 space-y-2 text-sm text-neutral-300">
+          ${langkah(1, `Tekan lambang <span class="font-semibold text-white">CC</span> di kontrol pemutar.`)}
+          ${langkah(2, `Pilih <span class="font-semibold text-white">Search</span>.`)}
+          ${langkah(3, `Pilih bahasa yang Anda inginkan.`)}
+          ${langkah(4, `Tekan <span class="font-semibold text-white">Search OpenSubtitles</span>.`)}
+          ${langkah(5, `Pilih salah satu hasilnya, dan subtitle langsung menyala.`)}
+        </ol>
+      </div>
+
+      <button type="button" data-mulai
+        class="mt-6 w-full rounded bg-red-600 py-3 font-semibold hover:bg-red-500">
+        Mengerti, mulai menonton
+      </button>
+    </div>
+  `;
+
+  document.body.append(layar);
+
+  const tombol = layar.querySelector("[data-mulai]");
+  tombol.focus({ preventScroll: true });
+
+  tombol.onclick = () => {
+    // Dicatat lebih dulu supaya panduannya tidak muncul lagi, bahkan kalau
+    // pemutarannya sendiri gagal sesudah ini.
+    Auth.updateSettings({ tourSeen: true });
+    layar.remove();
+    onSelesai();
+  };
 }
 
 // ---------- Besar / kecil ----------
@@ -3877,6 +3966,7 @@ function openProfileMenu() {
   const person = `<svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6" stroke-linecap="round"/></svg>`;
   const power = `<svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3v9M6.6 6.6a9 9 0 1 0 10.8 0" stroke-linecap="round"/></svg>`;
   const gear = `<svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M21.2 12h-2.4M5.2 12H2.8M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7M18.5 18.5l-1.7-1.7M7.2 7.2 5.5 5.5" stroke-linecap="round"/></svg>`;
+  const buku = `<svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15.5H6.5A2.5 2.5 0 0 0 4 21V5.5Z" stroke-linejoin="round"/><path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20" stroke-linecap="round"/></svg>`;
 
   profileMenu.innerHTML = `
     ${others
@@ -3900,6 +3990,7 @@ function openProfileMenu() {
     ${row("Kelola Profil", pencil, "data-manage")}
     ${row("Ganti Profil", exit, "data-switch")}
     ${row("Pengaturan", gear, "data-settings")}
+    ${row("Panduan", buku, "data-panduan")}
     ${row("Akun", person, "data-account")}
     ${row("Keluar", power, "data-logout")}
   `;
@@ -3931,6 +4022,10 @@ function openProfileMenu() {
   profileMenu.querySelector("[data-settings]").onclick = () => {
     closeProfileMenu();
     settingsScreen();
+  };
+  profileMenu.querySelector("[data-panduan]").onclick = () => {
+    closeProfileMenu();
+    panduanScreen();
   };
   profileMenu.querySelector("[data-account]").onclick = () => {
     closeProfileMenu();
@@ -4064,6 +4159,234 @@ function settingsScreen() {
   gate.querySelector("[data-back]").onclick = back;
   gate.querySelector("[data-close]").onclick = back;
   gate.querySelector("[data-admin]")?.addEventListener("click", () => adminScreen());
+}
+
+// ---------- Panduan ----------
+// Buku petunjuk seluruh situs, dibuka dari menu profil. Satu bagian per topik,
+// dilipat sebagai <details> supaya daftarnya tidak menakutkan -- orang membuka
+// yang sedang ia cari, bukan membaca semuanya.
+//
+// Isinya ditulis dari sudut pandang penonton: apa yang ia lihat dan tombol apa
+// yang ia tekan. Perilaku otomatis (posisi tersimpan, subtitle dicari sendiri)
+// tetap disebut, karena hal yang terjadi sendiri tanpa penjelasan itulah yang
+// paling sering dikira rusak.
+function panduanScreen() {
+  // judul + isi -> satu bagian yang bisa dilipat
+  const bagian = (ikon, judul, isi) => `
+    <details class="mb-2 rounded border border-neutral-800 bg-black/30">
+      <summary class="flex cursor-pointer list-none items-center gap-3 p-4 hover:bg-neutral-900">
+        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-black/60">${ikon}</span>
+        <span class="font-semibold">${judul}</span>
+      </summary>
+      <div class="space-y-3 border-t border-neutral-800 p-4 text-sm leading-relaxed text-neutral-300">
+        ${isi}
+      </div>
+    </details>`;
+
+  const p = (teks) => `<p>${teks}</p>`;
+  const b = (teks) => `<span class="font-semibold text-white">${teks}</span>`;
+  const sub = (judul, teks) => `<p><span class="font-semibold text-white">${judul}</span> — ${teks}</p>`;
+
+  // ikon kecil khusus layar ini; yang lain dipakai ulang dari ikon global
+  const iSearch = strokeIcon(`<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>`);
+  const iGear = strokeIcon(
+    `<circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M21.2 12h-2.4M5.2 12H2.8M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7M18.5 18.5l-1.7-1.7M7.2 7.2 5.5 5.5"/>`
+  );
+  const iPerson = strokeIcon(`<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/>`);
+  const iRumah = strokeIcon(`<path d="M3 11 12 4l9 7"/><path d="M5 10v10h5v-6h4v6h5V10"/>`);
+  const iJam = strokeIcon(`<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>`);
+
+  showGate(`
+    <div class="relative min-h-full">
+      ${gateBrand()}
+      <button type="button" data-back
+        class="absolute right-5 top-5 z-20 text-3xl font-light leading-none text-neutral-300 hover:text-white md:right-10 md:top-8 md:text-4xl">&times;</button>
+
+      <div class="gate-rise mx-auto w-full max-w-2xl px-5 py-24 md:px-8">
+        <h1 class="text-2xl font-bold md:text-3xl">Panduan</h1>
+        <p class="mt-2 text-sm text-neutral-400">
+          Cara memakai semua yang ada di situs ini. Buka bagian yang sedang Anda cari.
+        </p>
+
+        <div class="mt-8">
+          ${bagian(
+            iPerson,
+            "Akun: daftar, masuk, keluar",
+            p(`Daftar dengan ${b("username")}, email, dan password minimal 8 karakter.
+               Masuk cukup dengan username dan password -- bukan email.`) +
+            p(`Tombol ${b("mata")} di kolom password menampilkan atau menyembunyikan
+               ketikan Anda.`) +
+            p(`Sesi bertahan sendiri: memuat ulang halaman tidak meminta login lagi,
+               tapi selalu berhenti dulu di pemilih profil -- profil ber-PIN tetap
+               ditanya PIN-nya.`) +
+            p(`Menu profil &rarr; ${b("Akun")} menampilkan username, email, dan jumlah
+               profil terpakai. Keluar lewat foto profil di pojok kanan atas &rarr;
+               ${b("Keluar")}.`)
+          )}
+
+          ${bagian(
+            iPerson,
+            "Profil, PIN, dan profil anak",
+            p(`Satu akun bisa punya sampai ${b("4 profil")}, masing-masing dengan My List,
+               riwayat tontonan, dan pengaturannya sendiri. Kalau akun hanya punya satu
+               profil tanpa PIN, situs langsung masuk tanpa bertanya.`) +
+            sub("Menambah profil", `lewat kartu ${b("+")} di layar "Siapa yang menonton?",
+               selama profilnya belum empat.`) +
+            sub("Mengubah profil", `foto profil di pojok kanan atas &rarr; ${b("Kelola Profil")}.
+               Dari sana bisa mengganti nama, memilih dari 53 foto profil, memasang PIN,
+               atau menghapus profilnya -- menghapus ikut membuang riwayat dan My
+               List-nya.`) +
+            sub("PIN", `4 digit angka, mengunci profil dari anggota keluarga lain. Lupa?
+               Tekan ${b("Lupa PIN?")} di layar PIN lalu masukkan password akun -- PIN-nya
+               dilepas dan profil terbuka.`) +
+            sub("Profil anak", `centang ${b("Profil untuk anak")} di formulir profil, lalu
+               pilih batasnya: di bawah 13 tahun, 13 ke atas, atau 18 ke atas. Judul di
+               atas batas itu hilang dari beranda, pencarian, dan tidak bisa diputar.
+               Fotonya diberi tanda ${b("KIDS")}.`) +
+            sub("Ganti profil", `lewat menu profil &rarr; ${b("Ganti Profil")}, atau klik
+               langsung profil lain yang tampil di menu itu.`)
+          )}
+
+          ${bagian(
+            iRumah,
+            "Beranda dan menjelajah",
+            p(`Menu atas -- ${b("Home")}, ${b("Series")}, ${b("Movies")}, ${b("New & Popular")} --
+               masing-masing berisi kumpulan baris yang berbeda: film populer, anime,
+               drama Korea, film Indonesia, dan lainnya.`) +
+            p(`Beranda hanya berisi judul yang tersedia di layanan streaming Indonesia.
+               Judul di luar itu tidak hilang -- mereka tetap bisa ditemukan lewat
+               ${b("pencarian")}.`) +
+            p(`Arahkan kursor ke sebuah kartu (atau sorot dengan remote TV) untuk melihat
+               judul dan tahunnya; klik untuk membuka halamannya. Tanda ${b("N")} merah
+               berarti judul itu ada di Netflix. Baris digeser dengan panah di tepi
+               kiri-kanan, roda tetikus, atau usapan jari.`) +
+            p(`Video besar di atas beranda punya tombol ${b("pengeras suara")} untuk
+               membunyikan atau membisukannya. Ia berhenti sendiri saat Anda membuka
+               film lain atau menggulir ke bawah.`)
+          )}
+
+          ${bagian(
+            iSearch,
+            "Pencarian",
+            p(`Ketik di kotak ${b("Cari film...")} di bagian atas -- hasilnya muncul
+               sambil Anda mengetik.`) +
+            p(`Sebagian hasil disembunyikan saringan: judul tanpa gambar, judul CAM
+               (belum ada di layanan streaming mana pun, biasanya rekaman bioskop), dan
+               film lama kalau saringannya dinyalakan. Jumlah yang disembunyikan ditulis
+               di atas hasil, dan semuanya bisa diatur di ${b("Pengaturan")}.`)
+          )}
+
+          ${bagian(
+            ICON_PLAY,
+            "Halaman film",
+            sub("Play", `memutar filmnya. Kalau judul itu pernah ditonton, tulisannya
+               berubah jadi ${b("Lanjutkan")} lengkap dengan episode dan menitnya --
+               dan pemutarannya berlanjut dari sana, bukan dari awal.`) +
+            sub("Tombol +", `menyimpan judul ke ${b("My List")}; tandanya berubah jadi
+               ceklis. Tekan lagi untuk mengeluarkannya. Di sebelahnya ada tombol
+               jempol untuk menandai suka.`) +
+            sub("% match", `skor penonton dari TMDB. Judul bernilai 80 ke atas diberi
+               tanda ${b("Most Liked")}.`) +
+            sub("Trailer", `berjalan otomatis dengan suara beberapa detik setelah halaman
+               terbuka. Bisukan lewat tombol pengeras suara di pojok kanan atas; pilihan
+               Anda diingat untuk judul-judul berikutnya.`) +
+            sub("Label kotak", `angka umur (mis. ${b("13+")}) dari Lembaga Sensor Film,
+               dan ${b("HD")} atau ${b("CAM")} -- CAM berarti belum ada di layanan resmi
+               mana pun, jadi kemungkinan besar rekaman bioskop.`) +
+            sub("Serial", `pilih season dari menu, klik episode untuk memutarnya.
+               Episode terakhir yang Anda tonton diberi latar lebih terang.`) +
+            sub("Tonton di", `tautan ke layanan streaming resmi yang menayangkan judul
+               itu di Indonesia.`)
+          )}
+
+          ${bagian(
+            ICON_BACK,
+            "Saat menonton",
+            p(`Sebelum tontonan pertama di tiap profil, panduan singkat muncul sekali
+               berisi dua hal terpenting di bawah ini.`) +
+            sub("Keluar & kecilkan", `dua tombol bulat di ${b("pojok kiri atas")}: panah
+               untuk keluar, panah serong untuk mengecilkan. Sengaja dibuat samar supaya
+               tidak mengganggu film -- arahkan kursor ke sana dan ia menjadi pekat.
+               Keduanya tidak pernah hilang.`) +
+            sub("Pemutar kecil", `film terus berjalan di pojok kanan bawah sambil Anda
+               menjelajah. Klik jendelanya untuk membesarkan lagi, tanda &times; untuk
+               menutup.`) +
+            sub("Pintasan", `${b("M")} mengecilkan/membesarkan, ${b("F")} layar penuh,
+               ${b("Esc")} keluar (dari pemutar kecil: membesarkan dulu). Tombol back
+               ponsel juga menutup pemutar, bukan meninggalkan situs.`) +
+            sub("Layar ponsel", `di Android layar otomatis berputar mendatar saat film
+               dimulai, meskipun kunci rotasi ponsel menyala. Di iPhone ikuti saja
+               orientasi ponsel -- sistemnya memang tidak mengizinkan situs memutarnya.`) +
+            sub("Posisi tersimpan", `menit terakhir Anda tersimpan otomatis. Menjelang
+               akhir episode, tombol putih ${b("Next To ...")} muncul sebentar di pojok
+               kanan atas untuk lompat ke episode berikutnya -- kalau sudah hilang,
+               sentuh pojok kanan atas untuk memanggilnya lagi.`)
+          )}
+
+          ${bagian(
+            ICON_CC,
+            "Subtitle",
+            p(`Subtitle ${b("Indonesia")} dicarikan otomatis saat film dibuka; kalau
+               tidak ada, dicoba bahasa Inggris. Kalau keduanya tidak ketemu, cari
+               sendiri dari dalam pemutar:`) +
+            `<ol class="list-decimal space-y-1 pl-5">
+               <li>Tekan lambang ${b("CC")} di kontrol pemutar.</li>
+               <li>Pilih ${b("Search")}.</li>
+               <li>Pilih bahasa yang diinginkan.</li>
+               <li>Tekan ${b("Search OpenSubtitles")}.</li>
+               <li>Pilih salah satu hasilnya -- subtitle langsung menyala.</li>
+             </ol>`
+          )}
+
+          ${bagian(
+            iJam,
+            "Lanjutkan Menonton dan My List",
+            p(`Setelah menonton, baris ${b("Lanjutkan Menonton")} muncul paling atas di
+               Home. Bilah merah di bawah kartu menunjukkan sejauh mana Anda menonton,
+               dan tanda seperti ${b("S2:E5")} menunjukkan episode terakhirnya.`) +
+            p(`Episode yang sudah hampir tamat dianggap selesai: tombol Play langsung
+               menawarkan episode berikutnya, bukan mengulang tiga menit terakhir.`) +
+            p(`${b("My List")} berisi judul yang Anda simpan lewat tombol +, dan hanya
+               milik profil Anda sendiri.`)
+          )}
+
+          ${bagian(
+            iGear,
+            "Pengaturan",
+            p(`Tiga saringan, semuanya berlaku untuk profil yang sedang dibuka saja:`) +
+            sub("Tampilkan judul tanpa gambar", `bawaannya mati -- judul yang tidak punya
+               gambar disembunyikan dari pencarian.`) +
+            sub("Tampilkan judul CAM", `bawaannya mati -- judul yang belum ada di layanan
+               streaming mana pun disembunyikan.`) +
+            sub(`Sembunyikan film sebelum ${TAHUN_MINIMAL}`, `bawaannya mati -- nyalakan
+               kalau tidak ingin melihat film lama di beranda dan pencarian. Judul yang
+               tahunnya tidak diketahui tetap tampil.`)
+          )}
+
+          ${
+            Auth.isAdmin()
+              ? bagian(
+                  LOCK_SVG,
+                  "Panel Admin",
+                  p(`Hanya untuk akun ${b("admin")}: melihat seluruh akun terdaftar,
+                     profil-profilnya, riwayat tontonannya, dan total lama menonton.
+                     Dibuka dari Pengaturan. Panel ini hanya membaca -- tidak ada yang
+                     bisa diubah dari sana.`)
+                )
+              : ""
+          }
+        </div>
+
+        <button type="button" data-close
+          class="mt-8 w-full rounded border border-neutral-600 py-3 text-sm hover:bg-neutral-800">Kembali</button>
+      </div>
+    </div>
+  `);
+
+  // Dibuka dari menu profil, jadi kembalinya ke aplikasi -- bukan ke Pengaturan.
+  const kembali = () => showApp();
+  gate.querySelector("[data-back]").onclick = kembali;
+  gate.querySelector("[data-close]").onclick = kembali;
 }
 
 // ---------- Panel admin ----------

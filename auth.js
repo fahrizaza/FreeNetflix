@@ -391,6 +391,11 @@ export const DEFAULT_SETTINGS = {
   // "tampilkan". Bawaannya false berarti film lama TETAP TAMPIL -- tidak ada
   // yang disembunyikan sampai penonton sendiri yang menyalakannya.
   hideOld: false,
+
+  // Panduan singkat saat pertama kali menonton. Disimpan per profil, bukan per
+  // perangkat: yang perlu diajari itu orangnya, dan tiap anggota keluarga punya
+  // profilnya sendiri.
+  tourSeen: false,
 };
 
 export function settings() {
