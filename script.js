@@ -1566,6 +1566,17 @@ const ICON_MAXIMIZE = strokeIcon(`<path d="M16 8l-9 9m0-5v5h5"/>`, "h-4 w-4");
 const ICON_CLOSE = strokeIcon(`<path d="M6 6l12 12M18 6 6 18"/>`, "h-4 w-4");
 const ICON_NEXT = strokeIcon(`<path d="M9 6l6 6-6 6"/>`, "h-4 w-4");
 
+const ICON_MATA = strokeIcon(
+  `<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>`
+);
+
+// Mata tercoret: bentuk yang sama persis, ditambah garis miring menembusnya --
+// jadi peralihannya terbaca sebagai satu benda yang berubah, bukan dua ikon
+// berbeda yang saling menggantikan.
+const ICON_MATA_TUTUP = strokeIcon(
+  `<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/><path d="M4 20 20 4"/>`
+);
+
 // ---------- Player fullscreen ----------
 // "full" = menutupi layar, "mini" = jendela kecil di pojok sambil menjelajah
 let playerMode = "full";
@@ -2889,6 +2900,51 @@ const FIELD =
   "w-full rounded border border-neutral-700 bg-neutral-900 px-4 py-3 text-sm outline-none " +
   "placeholder:text-neutral-500 focus:border-neutral-400";
 
+// ---------- Kolom password dengan tombol mata ----------
+// Ditulis sebagai satu komponen, bukan disalin ke tiap layar: kolom password
+// ada di dua tempat (masuk/daftar dan reset PIN), dan dua salinan pasti akan
+// berbeda perilakunya cepat atau lambat.
+//
+// pr-12 wajib -- tanpa itu teks password yang panjang menyelinap ke bawah
+// tombol matanya.
+function passwordField(attrs, placeholder) {
+  return `
+    <div class="relative">
+      <input ${attrs} type="password" class="${FIELD} pr-12" placeholder="${esc(placeholder)}" />
+      <button type="button" data-mata tabindex="-1"
+        title="Tampilkan password" aria-label="Tampilkan password"
+        class="absolute inset-y-0 right-0 flex w-12 items-center justify-center text-neutral-500 transition hover:text-white">
+        ${ICON_MATA}
+      </button>
+    </div>`;
+}
+
+// Menghidupkan semua tombol mata di dalam sebuah wadah.
+//
+// tabindex="-1" pada tombolnya disengaja: menekan Tab dari kolom password
+// harus langsung sampai ke tombol Masuk, bukan mampir ke tombol mata dulu.
+function pasangTombolMata(scope) {
+  scope.querySelectorAll("[data-mata]").forEach((tombol) => {
+    const input = tombol.parentElement.querySelector("input");
+
+    tombol.onclick = () => {
+      const terlihat = input.type === "text";
+      input.type = terlihat ? "password" : "text";
+
+      tombol.innerHTML = terlihat ? ICON_MATA : ICON_MATA_TUTUP;
+      tombol.title = terlihat ? "Tampilkan password" : "Sembunyikan password";
+      tombol.setAttribute("aria-label", tombol.title);
+
+      // Fokus dikembalikan ke kolomnya supaya pengguna bisa langsung mengetik
+      // lagi. Kursor ditaruh di akhir teks, bukan di awal -- browser biasanya
+      // memindahkannya ke awal saat type diganti.
+      input.focus();
+      const akhir = input.value.length;
+      input.setSelectionRange?.(akhir, akhir);
+    };
+  });
+}
+
 function authScreen(mode = "signin", message = "") {
   const isSignup = mode === "signup";
 
@@ -2907,8 +2963,10 @@ function authScreen(mode = "signin", message = "") {
               ? `<input data-email type="email" class="${FIELD}" placeholder="Email (gmail)" autocomplete="email" />`
               : ""
           }
-          <input data-password type="password" class="${FIELD}" placeholder="Password"
-            autocomplete="${isSignup ? "new-password" : "current-password"}" />
+          ${passwordField(
+            `data-password autocomplete="${isSignup ? "new-password" : "current-password"}"`,
+            "Password"
+          )}
 
           <p data-error class="min-h-5 text-sm text-red-500">${esc(message)}</p>
 
@@ -2931,6 +2989,8 @@ function authScreen(mode = "signin", message = "") {
   const form = gate.querySelector("[data-form]");
   const errorEl = gate.querySelector("[data-error]");
   const submit = gate.querySelector("[data-submit]");
+
+  pasangTombolMata(gate);
 
   gate.querySelector("[data-switch]").onclick = () =>
     authScreen(isSignup ? "signin" : "signup");
@@ -3209,8 +3269,7 @@ function resetPinScreen(profile) {
           </p>
 
           <form data-form class="mt-6 space-y-4">
-            <input data-password type="password" autocomplete="current-password"
-              class="${FIELD}" placeholder="Password akun" />
+            ${passwordField(`data-password autocomplete="current-password"`, "Password akun")}
 
             <p data-error class="min-h-5 text-sm text-red-500"></p>
 
@@ -3232,6 +3291,8 @@ function resetPinScreen(profile) {
   const password = gate.querySelector("[data-password]");
   const errorEl = gate.querySelector("[data-error]");
   const submit = gate.querySelector("[data-submit]");
+
+  pasangTombolMata(gate);
 
   gate.querySelector("[data-back]").onclick = () => pinScreen(profile);
 

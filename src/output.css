@@ -276,6 +276,9 @@
   .inset-x-0 {
     inset-inline: 0px;
   }
+  .inset-y-0 {
+    inset-block: 0px;
+  }
   .top-0 {
     top: 0px;
   }
@@ -1228,6 +1231,9 @@
   }
   .pt-6 {
     padding-top: calc(var(--spacing) * 6);
+  }
+  .pr-12 {
+    padding-right: calc(var(--spacing) * 12);
   }
   .pb-1 {
     padding-bottom: var(--spacing);
