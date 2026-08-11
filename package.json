@@ -4,6 +4,7 @@
   "main": "script.js",
   "scripts": {
     "build": "tailwindcss -i src/input.css -o src/output.css",
+    "snapshot": "node scripts/snapshot.mjs",
     "watch": "tailwindcss -i src/input.css -o src/output.css --watch",
     "push": "node scripts/push.mjs",
     "test": "echo \"Error: no test specified\" && exit 1"

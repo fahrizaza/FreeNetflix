@@ -56,6 +56,43 @@ try {
 const cabang = baca("git rev-parse --abbrev-ref HEAD");
 
 // ---------------------------------------------------------------------------
+// 0. Segarkan snapshot katalog kalau sudah tua.
+//
+// Isi baris beranda dibaca pengunjung dari data/katalog.json, bukan dari TMDB
+// langsung -- jadi kesegarannya bergantung pada snapshot ikut terkirim. Batas
+// 20 jam (bukan 24) supaya push harian pada jam yang kira-kira sama tetap
+// menyegarkan, tidak meleset gara-gara selisih beberapa menit.
+//
+// Gagal mengunduh TIDAK menggagalkan push: snapshot kemarin masih jauh lebih
+// baik daripada perubahan kode yang tertahan di mesin ini.
+// ---------------------------------------------------------------------------
+import { readFileSync } from "node:fs";
+
+const BATAS_SEGAR_JAM = 20;
+
+let umurJam = Infinity;
+try {
+  const { generatedAt } = JSON.parse(readFileSync("data/katalog.json", "utf8"));
+  umurJam = (Date.now() - Date.parse(generatedAt)) / 36e5;
+} catch {
+  /* belum ada snapshot sama sekali */
+}
+
+if (umurJam > BATAS_SEGAR_JAM) {
+  kabar(umurJam === Infinity
+    ? "Snapshot katalog belum ada; mengunduh dari TMDB..."
+    : `Snapshot katalog berumur ${Math.round(umurJam)} jam; menyegarkan...`);
+  try {
+    jalankan("node scripts/snapshot.mjs");
+    beres("Snapshot katalog segar");
+  } catch {
+    console.log(`${KUNING}! Snapshot gagal diunduh; memakai data lama.${RESET}`);
+  }
+} else {
+  catat(`snapshot katalog masih segar (${Math.round(umurJam)} jam)`);
+}
+
+// ---------------------------------------------------------------------------
 // 1. Build CSS lebih dulu.
 //
 // Ini bagian terpenting dari skrip ini. Tailwind di proyek ini di-BUILD ke

@@ -2,19 +2,12 @@
 // dari browser di domain mana pun -- tidak perlu proxy seperti API sebelumnya.
 import * as Auth from "./auth.js";
 
-const TMDB_KEY = "e514a26ed1063ffba53ecce04eeb969d";
-const TMDB = "https://api.themoviedb.org/3";
-const IMG = "https://image.tmdb.org/t/p";
-const REGION = "ID"; // dipakai untuk daftar layanan streaming
+// Kunci API, daftar baris, dan bentuk baku judul tinggal di config.mjs karena
+// dipakai juga oleh scripts/snapshot.mjs (Node) yang mengunduh katalog harian.
+import { TMDB_KEY, TMDB, IMG, REGION, SECTIONS, normalize, pickLogo } from "./config.mjs";
+
 const PLAYER = "https://nextgencloudfabric.com/embed";
 const STORAGE_KEY = "netflix:saved";
-
-// Hanya judul yang benar-benar ada di layanan streaming Indonesia yang boleh
-// tampil di beranda. TMDB bisa menyaringnya langsung lewat watch_region, jadi
-// tidak perlu menembak detail satu per satu hanya untuk mengecek. Judul di luar
-// itu tetap bisa ditemukan lewat kotak pencarian.
-const ONLY_STREAMABLE =
-  `watch_region=${REGION}&with_watch_monetization_types=flatrate%7Cfree%7Cads%7Crent%7Cbuy`;
 
 // ---------- Batas umur profil anak ----------
 // Satu tabel umur untuk semuanya. Beranda dan pencarian menyaring dengan cara
@@ -89,106 +82,6 @@ function maturityParams(type) {
   return `&certification_country=${CERT_COUNTRY[type]}&certification=${encodeURIComponent(list)}`;
 }
 
-// 6 bulan terakhir, dipakai baris "Trending Now"
-const SIX_MONTHS_AGO = new Date(Date.now() - 182 * 864e5).toISOString().slice(0, 10);
-
-const ROWS = [
-  
-  {
-    key: "trending",
-    title: "Trending Now",
-    path:
-      `/discover/movie?${ONLY_STREAMABLE}&include_adult=false` +
-      `&primary_release_date.gte=${SIX_MONTHS_AGO}&sort_by=popularity.desc`,
-    type: "MOVIE",
-  },
-  {
-    key: "series",
-    title: "Serial Populer",
-    path: `/discover/tv?${ONLY_STREAMABLE}&include_adult=false&sort_by=popularity.desc`,
-    type: "SHOW",
-  },
-  {
-    // vote_count.gte menyaring judul obskur/dewasa yang ikut terangkat
-    // kalau hanya diurutkan berdasarkan popularitas
-    key: "anime",
-    title: "Anime",
-    path:
-      `/discover/tv?${ONLY_STREAMABLE}&with_genres=16&with_original_language=ja` +
-      "&include_adult=false&vote_count.gte=200&sort_by=popularity.desc",
-    type: "SHOW",
-  },
-  {
-    key: "local",
-    title: "Film Indonesia",
-    path:
-      `/discover/movie?${ONLY_STREAMABLE}&with_original_language=id` +
-      "&include_adult=false&sort_by=popularity.desc",
-    type: "MOVIE",
-  },
-  {
-    key: "drakor",
-    title: "Drama Korea",
-    path:
-      `/discover/movie?${ONLY_STREAMABLE}&with_original_language=ko` +
-      "&include_adult=false&sort_by=popularity.desc",
-    type: "MOVIE",
-  },
-];
-
-// Menu navbar. Tiap bagian punya kumpulan barisnya sendiri; dimuat sekali saat
-// pertama dibuka, lalu tinggal ditampilkan-sembunyikan tanpa menembak TMDB lagi.
-const movieRow = (key, title, extra) => ({
-  key,
-  title,
-  path: `/discover/movie?${ONLY_STREAMABLE}&include_adult=false&${extra}`,
-  type: "MOVIE",
-});
-
-const tvRow = (key, title, extra) => ({
-  key,
-  title,
-  path: `/discover/tv?${ONLY_STREAMABLE}&include_adult=false&${extra}`,
-  type: "SHOW",
-});
-
-const SECTIONS = [
-  { key: "home", label: "Home", rows: ROWS },
-  {
-    key: "series",
-    label: "Series",
-    rows: [
-      tvRow("s-pop", "Serial Populer", "sort_by=popularity.desc"),
-      tvRow("s-new", "Baru Tayang", `first_air_date.gte=${SIX_MONTHS_AGO}&sort_by=popularity.desc`),
-      tvRow("s-anime", "Anime", "with_genres=16&with_original_language=ja&vote_count.gte=200&sort_by=popularity.desc"),
-      tvRow("s-korea", "Drama Korea", "with_original_language=ko&sort_by=popularity.desc"),
-      tvRow("s-crime", "Kriminal", "with_genres=80&sort_by=popularity.desc"),
-      tvRow("s-local", "Serial Indonesia", "with_original_language=id&sort_by=popularity.desc"),
-    ],
-  },
-  {
-    key: "movies",
-    label: "Movies",
-    rows: [
-      movieRow("m-pop", "Film Populer", "sort_by=popularity.desc"),
-      movieRow("m-action", "Aksi", "with_genres=28&sort_by=popularity.desc"),
-      movieRow("m-horror", "Horor", "with_genres=27&sort_by=popularity.desc"),
-      movieRow("m-comedy", "Komedi", "with_genres=35&sort_by=popularity.desc"),
-      movieRow("m-anim", "Animasi", "with_genres=16&sort_by=popularity.desc"),
-      movieRow("m-local", "Film Indonesia", "with_original_language=id&sort_by=popularity.desc"),
-    ],
-  },
-  {
-    key: "new",
-    label: "New & Popular",
-    rows: [
-      movieRow("n-movie", "Film Baru", `primary_release_date.gte=${SIX_MONTHS_AGO}&sort_by=popularity.desc`),
-      tvRow("n-tv", "Serial Baru", `first_air_date.gte=${SIX_MONTHS_AGO}&sort_by=popularity.desc`),
-      movieRow("n-top", "Nilai Tertinggi", "vote_count.gte=500&sort_by=vote_average.desc"),
-      tvRow("n-toptv", "Serial Nilai Tertinggi", "vote_count.gte=300&sort_by=vote_average.desc"),
-    ],
-  },
-];
 
 // Semua judul yang pernah dimuat, dipakai saat kartu diklik.
 const catalog = new Map();
@@ -213,38 +106,9 @@ async function fetchList(path, forcedType = "") {
   return items;
 }
 
-function normalize(raw, forcedType = "") {
-  const type = forcedType || (raw.media_type === "tv" ? "SHOW" : "MOVIE");
-  const date = raw.release_date || raw.first_air_date || "";
+// normalize dan pickLogo kini tinggal di config.mjs, dipakai bersama skrip
+// snapshot -- keduanya harus menghasilkan bentuk judul yang persis sama.
 
-  return {
-    id: `${type === "SHOW" ? "tv" : "movie"}-${raw.id}`,
-    tmdbId: raw.id,
-    imdbId: "", // baru diambil saat modal dibuka (butuh satu request lagi)
-    title: raw.title || raw.name || "Tanpa judul",
-    year: date.slice(0, 4),
-    runtime: 0, // tidak ada di hasil pencarian, diisi dari detail
-    type,
-    overview: raw.overview || "",
-    poster: raw.poster_path ? `${IMG}/w500${raw.poster_path}` : "",
-    backdrop: raw.backdrop_path ? `${IMG}/w780${raw.backdrop_path}` : "",
-    rating: raw.vote_average ? Math.round(raw.vote_average * 10) : null,
-    logo: "",
-    logoLoaded: false,
-    genres: [],
-    seasonCount: 0,
-    episodeCount: 0,
-    providers: [],
-    providersLoaded: false, // beda dengan "tidak punya layanan": ini belum ditanyakan
-    certs: null, // sertifikasi umur per negara, diisi readCert
-    certLoaded: false,
-    detailLoaded: false,
-  };
-}
-
-// Logo judul: PNG berlatar transparan, dipakai menumpuk di atas backdrop
-// seperti kartu Netflix. Urutan pilihan: bahasa Indonesia, Inggris, lalu yang
-// tanpa bahasa; kalau sama, yang skornya paling tinggi.
 // Trailer resmi terbaru diutamakan; teaser dipakai kalau trailer tidak ada.
 // Banyak judul non-Inggris memang tidak punya video sama sekali -> "" dan
 // pratinjaunya tetap gambar diam.
@@ -260,17 +124,6 @@ function pickTrailer(videos) {
   )[0];
 
   return best.key;
-}
-
-function pickLogo(logos) {
-  if (!logos?.length) return "";
-
-  const rank = (l) => (l.iso_639_1 === "id" ? 0 : l.iso_639_1 === "en" ? 1 : 2);
-  const best = [...logos].sort(
-    (a, b) => rank(a) - rank(b) || (b.vote_average || 0) - (a.vote_average || 0)
-  )[0];
-
-  return `${IMG}/w500${best.file_path}`;
 }
 
 // Satu request mengambil semua yang kurang: durasi, genre, imdb_id untuk
@@ -2943,13 +2796,103 @@ function whenVisible() {
   });
 }
 
-// Antrian berputar: satu fetch dalam satu waktu, urut sesuai ROWS. Baris yang
-// gagal dikembalikan ke belakang antrian, jadi baris di belakangnya tidak ikut
-// tertahan dan yang gagal tetap dicoba lagi sampai berhasil.
-async function runQueue(rows) {
-  const queue = [...rows];
-  const attempts = new Map();
+// ---------- Snapshot katalog harian ----------
+// Isi baris beranda TIDAK diambil dari TMDB oleh browser pengunjung, melainkan
+// dari data/katalog.json -- berkas yang diunduh sekali sehari oleh pemilik
+// situs (npm run snapshot, otomatis ikut npm run push). Seribu pengunjung
+// berarti seribu pembacaan berkas statis dari hosting sendiri, bukan seribu
+// rombongan request ke API gratisan.
+//
+// TMDB tetap jadi cadangan: kalau berkasnya belum ada (dev lokal, snapshot
+// gagal), baris jatuh kembali ke jalur live persis seperti sebelumnya.
+let snapshotPromise = null;
 
+function snapshotKatalog() {
+  if (!snapshotPromise) {
+    snapshotPromise = fetch("data/katalog.json")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.generatedAt) {
+          const umurJam = Math.round((Date.now() - Date.parse(data.generatedAt)) / 36e5);
+          console.debug(`Katalog snapshot berumur ${umurJam} jam (${data.generatedAt})`);
+        }
+        return data;
+      })
+      .catch(() => null); // tidak ada snapshot = bukan galat, cuma jalur live
+  }
+  return snapshotPromise;
+}
+
+// Item snapshot didaftarkan ke catalog seperti hasil fetchList. Kalau judulnya
+// sudah ada di catalog (misalnya detailnya sudah pernah dimuat), yang lama
+// yang dipakai -- data yang lebih kaya tidak boleh tertimpa salinan snapshot.
+function pakaiItemSnapshot(mentah) {
+  const ada = catalog.get(mentah.id);
+  if (ada) return ada;
+
+  catalog.set(mentah.id, mentah);
+  return mentah;
+}
+
+// Mengambil isi satu baris: snapshot dulu, TMDB kalau tidak ada.
+//
+// Di jalur snapshot, maturityParams tidak dipakai -- saringan umur profil anak
+// sepenuhnya di sisi klien lewat allowedAge, yang memang sudah jadi penentu
+// akhir di kedua jalur. Parameter server hanyalah penghemat untuk jalur live.
+async function ambilItemBaris(row) {
+  const snap = await snapshotKatalog();
+  const dariSnapshot = snap?.rows?.[row.key];
+
+  if (Array.isArray(dariSnapshot) && dariSnapshot.length) {
+    return dariSnapshot.map(pakaiItemSnapshot);
+  }
+
+  return fetchList(row.path + maturityParams(row.type), row.type);
+}
+
+// Memuat satu baris sampai tergambar. Mengembalikan false kalau hasilnya basi
+// (profil sudah berganti) -- pemanggil yang memutuskan berhenti atau lanjut.
+async function muatSatuBaris(row, token) {
+  if (token !== rowsToken || !Auth.currentProfile()) return false;
+
+  const limit = Auth.maturityLimit();
+  let items = await ambilItemBaris(row);
+
+  // Saringan di sisi server itu penghemat, bukan jaminan: TMDB meloloskan
+  // judul yang SALAH SATU entri sertifikasinya cocok, dan snapshot tidak
+  // disaring sama sekali. Yang menentukan tetap pemeriksaan di sini, sama
+  // persis dengan yang dipakai pencarian.
+  if (limit) {
+    await Promise.all(items.map(fetchCert));
+    const lolos = items.filter((item) => allowedAge(item, limit));
+    if (lolos.length !== items.length) {
+      console.debug(`Baris "${row.title}": ${items.length - lolos.length} judul di luar batas umur`);
+    }
+    items = lolos;
+  }
+
+  // Disaring di sini, bukan lewat parameter tanggal ke TMDB: beberapa baris
+  // sudah memakai primary_release_date.gte sendiri, dan snapshot memang tidak
+  // membawa parameter apa-apa.
+  items = items.filter(tahunLolos);
+
+  // hasil basi dari profil sebelumnya tidak boleh ditulis
+  if (token !== rowsToken || Auth.maturityLimit() !== limit) return false;
+
+  fillRow(row.key, items, { top10: row.top10, logo: true });
+  renderSavedRow(); // lengkapi My List dengan data dari catalog
+  return true;
+}
+
+// Baris pertama yang dimuat langsung saat bagian dibuka; sisanya menunggu
+// digulir mendekat. Dengan snapshot, penundaan ini bukan soal kuota API lagi
+// -- tapi tetap menunda kerja render dan unduhan gambar untuk baris yang
+// mungkin tidak pernah dilihat.
+const EAGER_ROWS = 5;
+
+// Antrian berputar untuk baris-baris awal: satu per satu, urut, yang gagal
+// diantre ulang di belakang supaya tidak menahan baris lain.
+async function runQueue(rows) {
   // Antrian ini hidup lebih lama daripada profil yang memulainya: satu baris
   // bisa tertahan di whenVisible() atau diantre ulang berkali-kali. Tanpa
   // penanda, hasil yang berangkat saat profil dewasa masih aktif akan mendarat
@@ -2957,49 +2900,21 @@ async function runQueue(rows) {
   // resetSections membuat ulang baris dengan kunci yang sama persis.
   const token = rowsToken;
 
-  while (queue.length) {
-    if (token !== rowsToken) return; // baris sudah dibangun ulang untuk profil lain
+  const queue = rows.slice(0, EAGER_ROWS);
+  const attempts = new Map();
 
+  while (queue.length) {
     // Layar PIN dan pemilih profil mengosongkan profil aktif lalu menunggu
     // pengguna. Selama itu maturityLimit() bernilai 0, yang berarti "dewasa" --
     // padahal yang benar adalah "belum diketahui". Antriannya dihentikan saja.
-    if (!Auth.currentProfile()) return;
+    if (token !== rowsToken || !Auth.currentProfile()) return;
 
     const row = queue.shift();
     const attempt = (attempts.get(row.key) || 0) + 1;
     attempts.set(row.key, attempt);
 
     try {
-      const limit = Auth.maturityLimit();
-
-      // satu-satunya tempat baris menembak TMDB, jadi cukup di sini batas umur
-      // profil anak ditempelkan
-      let items = await fetchList(row.path + maturityParams(row.type), row.type);
-
-      // Saringan di sisi server itu penghemat, bukan jaminan: TMDB meloloskan
-      // judul yang SALAH SATU entri sertifikasinya cocok, jadi film dengan dua
-      // catatan (13+ bioskop, 17+ digital) tetap ikut. Yang menentukan tetap
-      // pemeriksaan di sini, sama persis dengan yang dipakai pencarian.
-      if (limit) {
-        await Promise.all(items.map(fetchCert));
-        const lolos = items.filter((item) => allowedAge(item, limit));
-        if (lolos.length !== items.length) {
-          console.debug(`Baris "${row.title}": ${items.length - lolos.length} judul di luar batas umur`);
-        }
-        items = lolos;
-      }
-
-      // Disaring di sini, bukan lewat parameter tanggal ke TMDB: beberapa baris
-      // sudah memakai primary_release_date.gte sendiri (mis. "Trending Now"
-      // yang dibatasi 6 bulan terakhir), dan menempelkan parameter kedua yang
-      // sama membuat TMDB memilih salah satunya tanpa bisa ditebak.
-      items = items.filter(tahunLolos);
-
-      // hasil basi dari profil sebelumnya tidak boleh ditulis
-      if (token !== rowsToken || Auth.maturityLimit() !== limit) return;
-
-      fillRow(row.key, items, { top10: row.top10, logo: true });
-      renderSavedRow(); // lengkapi My List dengan data dari catalog
+      if (!(await muatSatuBaris(row, token))) return; // basi -> seluruh antrian batal
     } catch (err) {
       console.error(`Gagal memuat baris "${row.title}" (percobaan ${attempt})`, err);
       queue.push(row); // antre lagi di belakang
@@ -3007,6 +2922,47 @@ async function runQueue(rows) {
 
     await wait(QUEUE_GAP_MS);
     await whenVisible();
+  }
+
+  pasangBarisMalas(rows.slice(EAGER_ROWS), token);
+}
+
+// Baris ke-6 dan seterusnya baru dimuat saat kerangkanya menggulir mendekati
+// layar. rootMargin memberi awalan 600px supaya isinya sudah terpasang sebelum
+// benar-benar terlihat -- pengguna tidak menatap skeleton.
+function pasangBarisMalas(rows, token) {
+  if (!rows.length) return;
+
+  const io = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+
+        io.unobserve(entry.target);
+        const row = rows.find((r) => r.key === entry.target.dataset.row);
+        if (row) muatBarisMandiri(row, token);
+      }
+    },
+    { rootMargin: "600px 0px" }
+  );
+
+  for (const row of rows) {
+    const shell = document.querySelector(`[data-row="${row.key}"]`);
+    if (shell) io.observe(shell);
+  }
+}
+
+// Pemuat untuk baris malas: berdiri sendiri, dengan sedikit percobaan ulang.
+// Gagal permanen dibiarkan sebagai skeleton -- baris pelengkap tidak layak
+// menahan apa pun yang lain.
+async function muatBarisMandiri(row, token, attempt = 1) {
+  try {
+    await muatSatuBaris(row, token);
+  } catch (err) {
+    console.error(`Gagal memuat baris "${row.title}" (percobaan ${attempt})`, err);
+    if (attempt < 3 && token === rowsToken) {
+      setTimeout(() => muatBarisMandiri(row, token, attempt + 1), 2500 * attempt);
+    }
   }
 }
 
