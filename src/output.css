@@ -83,6 +83,7 @@
     --drop-shadow-lg: 0 4px 4px rgb(0 0 0 / 0.15);
     --ease-in: cubic-bezier(0.4, 0, 1, 1);
     --ease-out: cubic-bezier(0, 0, 0.2, 1);
+    --animate-spin: spin 1s linear infinite;
     --animate-pulse: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
     --blur-sm: 8px;
     --aspect-video: 16 / 9;
@@ -288,9 +289,6 @@
   .top-1\/2 {
     top: calc(1 / 2 * 100%);
   }
-  .top-3 {
-    top: calc(var(--spacing) * 3);
-  }
   .top-4 {
     top: calc(var(--spacing) * 4);
   }
@@ -302,9 +300,6 @@
   }
   .right-1\.5 {
     right: calc(var(--spacing) * 1.5);
-  }
-  .right-3 {
-    right: calc(var(--spacing) * 3);
   }
   .right-4 {
     right: calc(var(--spacing) * 4);
@@ -332,9 +327,6 @@
   }
   .left-1\/2 {
     left: calc(1 / 2 * 100%);
-  }
-  .left-3 {
-    left: calc(var(--spacing) * 3);
   }
   .left-5 {
     left: calc(var(--spacing) * 5);
@@ -636,9 +628,6 @@
   .max-w-\[85\%\] {
     max-width: 85%;
   }
-  .max-w-\[calc\(100\%_-_1\.5rem\)\] {
-    max-width: calc(100% - 1.5rem);
-  }
   .max-w-full {
     max-width: 100%;
   }
@@ -704,8 +693,14 @@
   .animate-pulse {
     animation: var(--animate-pulse);
   }
+  .animate-spin {
+    animation: var(--animate-spin);
+  }
   .cursor-pointer {
     cursor: pointer;
+  }
+  .resize {
+    resize: both;
   }
   .snap-x {
     scroll-snap-type: x var(--tw-scroll-snap-strictness);
@@ -1223,14 +1218,8 @@
   .py-3 {
     padding-block: calc(var(--spacing) * 3);
   }
-  .py-4 {
-    padding-block: calc(var(--spacing) * 4);
-  }
   .py-8 {
     padding-block: calc(var(--spacing) * 8);
-  }
-  .py-10 {
-    padding-block: calc(var(--spacing) * 10);
   }
   .py-24 {
     padding-block: calc(var(--spacing) * 24);
@@ -1681,15 +1670,6 @@
     }
   }
   @media (width >= 40rem) {
-    .sm\:top-4 {
-      top: calc(var(--spacing) * 4);
-    }
-    .sm\:right-4 {
-      right: calc(var(--spacing) * 4);
-    }
-    .sm\:left-4 {
-      left: calc(var(--spacing) * 4);
-    }
     .sm\:mt-3 {
       margin-top: calc(var(--spacing) * 3);
     }
@@ -1753,14 +1733,8 @@
     .sm\:p-3 {
       padding: calc(var(--spacing) * 3);
     }
-    .sm\:p-4 {
-      padding: calc(var(--spacing) * 4);
-    }
     .sm\:p-6 {
       padding: calc(var(--spacing) * 6);
-    }
-    .sm\:p-8 {
-      padding: calc(var(--spacing) * 8);
     }
     .sm\:px-5 {
       padding-inline: calc(var(--spacing) * 5);
@@ -1773,9 +1747,6 @@
     }
     .sm\:py-2\.5 {
       padding-block: calc(var(--spacing) * 2.5);
-    }
-    .sm\:py-10 {
-      padding-block: calc(var(--spacing) * 10);
     }
     .sm\:text-2xl {
       font-size: var(--text-2xl);
@@ -2091,6 +2062,25 @@
 .player-controls {
   opacity: 0.75;
   transition: opacity 0.2s ease;
+  position: absolute;
+  left: max(0.75rem, env(safe-area-inset-left));
+  top: max(0.75rem, env(safe-area-inset-top));
+}
+.player-next {
+  position: absolute;
+  right: max(0.75rem, env(safe-area-inset-right));
+  top: max(0.75rem, env(safe-area-inset-top));
+  max-width: calc( 100% - max(0.75rem, env(safe-area-inset-right)) - max(0.75rem, env(safe-area-inset-left)) );
+}
+@media (min-width: 640px) {
+  .player-controls {
+    left: max(1rem, env(safe-area-inset-left));
+    top: max(1rem, env(safe-area-inset-top));
+  }
+  .player-next {
+    right: max(1rem, env(safe-area-inset-right));
+    top: max(1rem, env(safe-area-inset-top));
+  }
 }
 .player-controls button {
   box-shadow: 0 0 0 1px rgb(255 255 255 / 0.25), 0 2px 10px rgb(0 0 0 / 0.6);
@@ -2124,6 +2114,59 @@
     width: 14rem;
   }
 }
+.player-mini {
+  touch-action: none;
+  cursor: grab;
+}
+.player-mini.sedang-digeser {
+  cursor: grabbing;
+  box-shadow: 0 18px 45px rgb(0 0 0 / 0.75);
+}
+:root {
+  --aman-atas: env(safe-area-inset-top, 0px);
+  --aman-kanan: env(safe-area-inset-right, 0px);
+  --aman-bawah: env(safe-area-inset-bottom, 0px);
+  --aman-kiri: env(safe-area-inset-left, 0px);
+}
+body {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+header {
+  padding-top: env(safe-area-inset-top);
+}
+#gate {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+#gate .min-h-screen {
+  min-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+}
+.lapisan-aman {
+  padding-top: max(1rem, env(safe-area-inset-top));
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  padding-left: max(0.75rem, env(safe-area-inset-left));
+  padding-right: max(0.75rem, env(safe-area-inset-right));
+}
+@media (min-width: 640px) {
+  .lapisan-aman {
+    padding-top: max(2.5rem, env(safe-area-inset-top));
+    padding-bottom: max(2.5rem, env(safe-area-inset-bottom));
+    padding-left: max(1.5rem, env(safe-area-inset-left));
+    padding-right: max(1.5rem, env(safe-area-inset-right));
+  }
+}
+.lapisan-tengah {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+.lapisan-tengah > * {
+  margin-top: auto;
+  margin-bottom: auto;
+}
 @keyframes player-shrink {
   from {
     transform: scale(1.12);
@@ -2139,6 +2182,13 @@
     animation-duration: 0.01ms;
     animation-iteration-count: 1;
   }
+}
+.pemutar-penuh > iframe {
+  top: 0;
+  right: 0;
+  left: 0;
+  bottom: env(safe-area-inset-bottom, 0px);
+  height: auto;
 }
 @property --tw-translate-x {
   syntax: "*";
@@ -2425,6 +2475,11 @@
 @property --tw-ease {
   syntax: "*";
   inherits: false;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 @keyframes pulse {
   50% {

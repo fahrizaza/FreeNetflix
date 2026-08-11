@@ -798,12 +798,14 @@ function animateDetailIn(modal) {
 // terlihat berkedip.
 // gambar ditahan selama ini sebelum trailer ditampilkan; iframe sudah memuat
 // sejak detik pertama, jadi jeda ini benar-benar dipakai untuk menyangga
-const TRAILER_HOLD_MS = 5500;
+const TRAILER_HOLD_MS = 4000;
 
 let trailerTimer = null;
 let trailerFallback = null;
 let trailerPlaying = null; // dipanggil saat pemutar mengabarkan sudah jalan
 let trailerPaused = null; // dipanggil saat pemutar mengabarkan terjeda
+let trailerKabar = null; // dipanggil pada kabar status APA PUN dari YouTube
+let trailerHabis = null; // dipanggil saat video selesai, untuk mengulanginya
 
 // Suara trailer: menyala kecuali penonton sendiri yang mematikannya. Disimpan
 // di luar startModalTrailer supaya pilihannya bertahan saat membuka judul lain
@@ -811,9 +813,14 @@ let trailerPaused = null; // dipanggil saat pemutar mengabarkan terjeda
 let trailerSound = true;
 
 // Trailer bukan tontonan utama, jadi tidak perlu sekeras pemutar filmnya.
-const TRAILER_VOLUME = 60;
+const TRAILER_VOLUME = 40;
 
 function trailerAllowed() {
+  // Pilihan penonton menang di atas segalanya. Kalau ia mematikan trailer,
+  // iframe YouTube tidak pernah dibuat -- dan sesuatu yang tidak ada tidak bisa
+  // menampilkan tombol apa pun.
+  if (Auth.settings().noTrailer) return false;
+
   const conn = navigator.connection || {};
   if (reducedMotion || conn.saveData) return false;
   return !/(^|-)(2g|slow-2g)$/.test(conn.effectiveType || "");
@@ -853,9 +860,18 @@ window.addEventListener("message", (e) => {
   if (data?.event !== "infoDelivery" && data?.event !== "onStateChange") return;
 
   const state = typeof data.info === "number" ? data.info : data.info?.playerState;
+  if (state === undefined || state === null) return;
+
+  // Menandai bahwa pemutar YouTube memang menjawab. Bedanya penting: pemutar
+  // yang DIAM SAJA berarti handshake-nya gagal, sedangkan pemutar yang menjawab
+  // "sedang terjeda" berarti ia hidup tapi videonya memang tidak jalan. Yang
+  // pertama layak dipaksa tampil; yang kedua tidak, karena yang akan tampil
+  // hanyalah tombol play besar milik YouTube.
+  trailerKabar?.();
+
   if (state === 1) trailerPlaying?.(); // 1 = sedang berjalan
   if (state === 2) trailerPaused?.(); // 2 = terjeda -- bisa jadi suaranya ditolak
-  if (state === 0) stopModalTrailer(); // 0 = habis (loop biasanya mencegah ini)
+  if (state === 0) trailerHabis?.(); // 0 = habis -> diulang sendiri
 });
 
 function clearTrailerTimers() {
@@ -865,6 +881,8 @@ function clearTrailerTimers() {
   trailerFallback = null;
   trailerPlaying = null;
   trailerPaused = null; // kalau tertinggal, kabar jeda milik trailer lama masih ditanggapi
+  trailerKabar = null;
+  trailerHabis = null;
 }
 
 function stopModalTrailer() {
@@ -892,14 +910,22 @@ function startModalTrailer(item, modal) {
 
   const key = encodeURIComponent(item.trailer);
 
-  // loop wajib: tanpa itu, begitu trailer habis YouTube menampilkan layar
-  // akhir berisi "More videos" dan deretan thumbnail.
-  // playlist=<key> adalah syarat loop bekerja untuk video tunggal.
+  // TIDAK memakai loop=1&playlist=<key>, dan itu disengaja.
+  //
+  // Cara itu memang membuat video tunggal berulang, tapi harganya mahal:
+  // "playlist" membuat YouTube menganggap ini daftar putar, lalu menggambar
+  // tombol navigasi lagu sebelumnya dan berikutnya di tengah pemutar --
+  // dua lingkaran yang menumpuk di atas trailer dan tidak bisa disingkirkan
+  // lewat CSS karena berada di dalam iframe lintas domain.
+  //
+  // Pengulangannya sekarang kita urus sendiri lewat trailerHabis di bawah:
+  // begitu video selesai, ia dikembalikan ke detik nol dan dijalankan lagi.
+  //
   // iv_load_policy=3 mematikan anotasi, fs=0 & disablekb=1 mematikan kontrol
   // yang tidak kita pakai.
   const src =
     `https://www.youtube-nocookie.com/embed/${key}` +
-    `?autoplay=1&mute=1&controls=0&loop=1&playlist=${key}` +
+    "?autoplay=1&mute=1&controls=0" +
     "&modestbranding=1&playsinline=1&rel=0&iv_load_policy=3&fs=0&disablekb=1&enablejsapi=1";
 
   // Iframe dipasang SEKARANG supaya mulai memuat, tapi masih bening dan
@@ -956,11 +982,21 @@ function startModalTrailer(item, modal) {
   // trailernya dikembalikan ke bisu dan dijalankan lagi. Trailer bisu jauh
   // lebih baik daripada trailer yang membeku.
   trailerPaused = () => {
-    if (!baruDinyalakan || !frame.isConnected) return;
+    if (!frame.isConnected) return;
 
-    trailerSound = false; // jangan coba-coba lagi di judul berikutnya
-    bisukan();
-    ytCommand(frame, "playVideo");
+    // Browser menolak suara -> kembalikan ke bisu lalu jalankan lagi.
+    if (baruDinyalakan) {
+      trailerSound = false; // jangan coba-coba lagi di judul berikutnya
+      bisukan();
+      ytCommand(frame, "playVideo");
+      return;
+    }
+
+    // Terjeda karena sebab lain -- iklan yang menyela, jaringan tersendat, atau
+    // penonton yang menekan sesuatu. Apa pun sebabnya, YouTube sekarang sedang
+    // menggambar tombol play besar di tengah. Mundur ke gambar diam.
+    playing = false;
+    sembunyikan();
   };
 
   // Dua syarat yang harus sama-sama terpenuhi sebelum ditampilkan:
@@ -970,6 +1006,13 @@ function startModalTrailer(item, modal) {
   let playing = false;
   let held = false;
 
+  // Pernahkah pemutar YouTube menjawab handshake kita sama sekali? Dipakai
+  // jaring pengaman di bawah untuk membedakan "handshake gagal" dari "videonya
+  // memang tidak jalan".
+  let dapatKabar = false;
+
+  trailerKabar = () => (dapatKabar = true);
+
   const reveal = () => {
     if (!playing || !held || !frame.isConnected) return;
     frame.classList.add("opacity-100");
@@ -978,9 +1021,41 @@ function startModalTrailer(item, modal) {
     paint();
   };
 
+  // Kembali ke gambar diam.
+  //
+  // Inilah yang menutupi tombol play besar milik YouTube. Begitu video terjeda,
+  // YouTube menggambar tombol itu di tengah pemutarnya dan tidak ada parameter
+  // apa pun yang bisa mematikannya -- controls=0 hanya membuang bilah kontrol
+  // bawah. Yang bisa kita lakukan: memudarkan iframe-nya sehingga yang terlihat
+  // kembali backdrop di lapisan bawah.
+  const sembunyikan = () => {
+    frame.classList.remove("opacity-100");
+    btn.classList.add("hidden");
+    btn.classList.remove("flex");
+  };
+
+  // Pengganti loop bawaan YouTube, yang sengaja tidak kita pakai karena ia
+  // menyeret tombol navigasi daftar putar ke tengah layar.
+  //
+  // Iframe DISEMBUNYIKAN dulu sebelum diulang. Sepersekian detik antara "video
+  // habis" dan "video jalan lagi" adalah saat YouTube menggambar layar akhirnya
+  // -- deretan thumbnail "More videos" beserta tombol putar ulang. Memudarkan
+  // ke gambar diam membuat pergantian itu tidak pernah terlihat.
+  trailerHabis = () => {
+    if (!frame.isConnected) return;
+
+    playing = false;
+    sembunyikan();
+
+    ytCommand(frame, "seekTo", [0, true]);
+    ytCommand(frame, "playVideo");
+    // reveal() menyusul sendiri lewat trailerPlaying saat videonya benar-benar
+    // berjalan lagi -- bukan di sini, supaya layar akhirnya tidak sempat lolos.
+  };
+
   trailerPlaying = () => {
     playing = true;
-    reveal();
+    reveal(); // termasuk menampilkan lagi setelah sempat mundur karena terjeda
 
     // Modal ini hanya bisa terbuka karena penonton mengklik sesuatu, dan klik
     // itulah izin yang dibutuhkan browser untuk memperbolehkan suara. Jadi
@@ -998,8 +1073,22 @@ function startModalTrailer(item, modal) {
   // batas ini. Lebih baik trailer yang masih menyangga daripada tidak pernah
   // muncul sama sekali.
   trailerFallback = setTimeout(() => {
-    playing = true;
     held = true;
+
+    // INI SUMBER TOMBOL PLAY YOUTUBE YANG TERLIHAT PENONTON.
+    //
+    // Dulu baris ini menulis "playing = true" tanpa syarat, lalu menyingkap
+    // iframe. Kalau autoplay ditolak browser, yang tersingkap bukan trailer --
+    // melainkan pemutar YouTube yang terjeda, lengkap dengan tombol play
+    // besarnya di tengah layar.
+    //
+    // Sekarang pemaksaan itu hanya berlaku kalau YouTube tidak pernah menjawab
+    // sama sekali, yang berarti handshake-nya yang gagal dan videonya boleh
+    // jadi sebenarnya berjalan normal. Kalau ia menjawab tapi tidak berstatus
+    // "berjalan", biarkan gambar diam yang tampil -- jauh lebih baik daripada
+    // memamerkan antarmuka YouTube.
+    if (!dapatKabar) playing = true;
+
     reveal();
   }, TRAILER_HOLD_MS + 3500);
 
@@ -1035,7 +1124,7 @@ function openDetail(item) {
   pauseHero();
 
   modal.className =
-    "fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80 p-2 py-4 sm:p-4 sm:py-10";
+    "lapisan-aman fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80";
   modal.innerHTML = `
     <div class="w-full max-w-4xl overflow-hidden rounded-lg bg-[#181818] shadow-2xl">
 
@@ -1061,7 +1150,7 @@ function openDetail(item) {
           <div class="mt-3 flex items-center gap-2 sm:mt-5 sm:gap-3">
             <button type="button" data-play disabled
               class="flex items-center gap-2 rounded bg-white px-4 py-1.5 text-sm font-bold text-black hover:bg-white/80 disabled:cursor-not-allowed disabled:opacity-40 sm:px-7 sm:py-2 sm:text-lg">
-              ${ICON_PLAY}
+              <span data-play-icon class="flex">${ICON_PLAY}</span>
               <span data-play-label>Play</span>
             </button>
 
@@ -1260,7 +1349,7 @@ async function loadDetail(item, modal) {
     set("[data-play-label]", "Dibatasi");
   } else if (playerUrl(item)) {
     playBtn.disabled = false;
-    playBtn.onclick = () => openPlayer(item, firstEpisode);
+    playBtn.onclick = () => openPlayer(item, firstEpisode, playBtn);
     paintResume(item, modal);
   } else {
     set("[data-imdb]", "tidak ada ID IMDb");
@@ -1385,7 +1474,7 @@ function episodeRow(item, ep) {
   return `
     <button type="button" data-ep="${ep.season}-${ep.number}"
       class="flex w-full items-center gap-3 rounded p-2 text-left hover:bg-neutral-800 sm:gap-4 sm:p-3">
-      <span class="w-5 shrink-0 text-center text-base text-neutral-400 sm:w-6 sm:text-lg">${ep.number}</span>
+      <span data-play-icon class="w-5 shrink-0 text-center text-base text-neutral-400 sm:w-6 sm:text-lg">${ep.number}</span>
       <span class="h-12 w-20 shrink-0 overflow-hidden rounded bg-neutral-800 sm:h-16 sm:w-28">${thumb}</span>
       <span class="min-w-0 flex-1">
         <span class="flex items-baseline justify-between gap-3">
@@ -1456,7 +1545,7 @@ async function loadEpisodes(item, modal) {
 
     list.querySelectorAll("[data-ep]").forEach((btn) => {
       const [s, n] = btn.dataset.ep.split("-").map(Number);
-      btn.onclick = () => openPlayer(item, { season: s, number: n });
+      btn.onclick = () => openPlayer(item, { season: s, number: n }, btn);
       if (resumeEp && n === resume.number) btn.classList.add("bg-neutral-800/60");
     });
 
@@ -1538,6 +1627,16 @@ const ICON_MINIMIZE = strokeIcon(`<path d="M7 7l9 9m0-5v5h-5"/>`);
 const ICON_MAXIMIZE = strokeIcon(`<path d="M16 8l-9 9m0-5v5h5"/>`, "h-4 w-4");
 const ICON_CLOSE = strokeIcon(`<path d="M6 6l12 12M18 6 6 18"/>`, "h-4 w-4");
 const ICON_NEXT = strokeIcon(`<path d="M9 6l6 6-6 6"/>`, "h-4 w-4");
+
+// Cincin berputar, menggantikan ikon Play selama subtitle dicari. Busurnya
+// sengaja tidak penuh -- lingkaran utuh yang berputar terlihat diam.
+//
+// mx-auto supaya tetap di tengah saat ia menggantikan nomor episode, yang
+// kotaknya lebih lebar daripada ikonnya.
+const ICON_MEMUAT = `<svg viewBox="0 0 24 24" class="mx-auto h-4 w-4 animate-spin sm:h-5 sm:w-5"
+  fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+  <path d="M12 3a9 9 0 1 0 9 9" stroke-linecap="round"/>
+</svg>`;
 
 // Lambang CC, digambar sebagai lencana supaya penonton mengenalinya di antara
 // tombol-tombol pemutar -- bukan sekadar dua huruf yang mengambang.
@@ -1763,7 +1862,35 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) Auth.flushProgress();
 });
 
-async function openPlayer(item, ep = null) {
+// Menandai sebuah tombol sedang bekerja, dan mengembalikan fungsi untuk
+// memulihkannya. Dipakai openPlayer, karena di situlah penantiannya terjadi --
+// bukan di tiap tombol, yang jumlahnya tiga dan pasti akan melenceng satu sama
+// lain kalau ditulis terpisah.
+//
+// Tombolnya ikut dinonaktifkan: menekan Play dua kali selama subtitle dicari
+// akan menjalankan seluruh proses dua kali.
+function tandaiMemuat(tombol) {
+  if (!tombol) return () => {};
+
+  const ikon = tombol.querySelector("[data-play-icon]");
+  const label = tombol.querySelector("[data-play-label]");
+  const ikonAsli = ikon?.innerHTML;
+  const labelAsli = label?.textContent;
+
+  tombol.disabled = true;
+  if (ikon) ikon.innerHTML = ICON_MEMUAT;
+  if (label) label.textContent = "Memuat...";
+
+  return () => {
+    tombol.disabled = false;
+    if (ikon && ikonAsli !== undefined) ikon.innerHTML = ikonAsli;
+    if (label && labelAsli !== undefined) label.textContent = labelAsli;
+  };
+}
+
+// tombol: yang ditekan penonton, supaya bisa menunjukkan bahwa ia sedang
+// bekerja. Boleh kosong -- pemutaran tetap berjalan tanpa penanda apa pun.
+async function openPlayer(item, ep = null, tombol = null) {
   // Garis pertahanan terakhir. Semua baris memang sudah disaring, tapi pemutar
   // adalah satu-satunya pintu yang benar-benar menayangkan sesuatu -- kalau ada
   // jalur yang terlewat, di sinilah ia harus berhenti, bukan di tengah film.
@@ -1772,19 +1899,37 @@ async function openPlayer(item, ep = null) {
     return;
   }
 
-  // Penonton baru diberi panduan singkat dulu, SEBELUM iframe dibuat -- kalau
-  // ditumpuk di atas pemutar, filmnya sudah berjalan (dan berbunyi) di belakang
-  // selagi orangnya masih membaca. Setelah ditutup, fungsi ini dipanggil ulang
-  // dengan argumen yang sama dan lolos karena tourSeen sudah tercatat.
+  // Penanda "memuat" sengaja dipasang SESUDAH panduan, bukan sebelumnya:
+  // penonton yang sedang membaca panduan tidak sedang menunggu apa pun, dan
+  // tombol yang berputar di belakangnya cuma bohong.
+  //
+  // tombol ikut dioper ke pemanggilan ulang, supaya penantian yang sebenarnya
+  // -- sesudah panduan ditutup -- tetap punya penandanya.
   if (!Auth.settings().tourSeen) {
-    tampilkanPanduan(() => openPlayer(item, ep));
+    tampilkanPanduan(() => openPlayer(item, ep, tombol));
     return;
   }
 
+  const selesaiMemuat = tandaiMemuat(tombol);
+
+  try {
+    await lanjutkanPemutaran(item, ep);
+  } finally {
+    // Dipulihkan apa pun yang terjadi -- termasuk kalau pemutaran batal karena
+    // judulnya tidak punya ID IMDb. Tombol yang tertinggal berputar selamanya
+    // lebih membingungkan daripada tidak ada penanda sama sekali.
+    selesaiMemuat();
+  }
+}
+
+async function lanjutkanPemutaran(item, ep) {
   // Subtitle harus sudah ada SEBELUM iframe dibuat: sub_url adalah parameter
   // URL, dan mengubahnya nanti berarti memuat ulang iframe -- filmnya akan
   // mengulang dari awal. Jadi ditunggu di sini, dengan batas waktu, dan
   // langsung nihil kalau kuncinya belum diisi.
+  //
+  // Inilah penantian yang membuat tombol Play terasa mati sebelum ada penanda
+  // "Memuat...": pencarian subtitle bisa memakan waktu sampai SUB_TIMEOUT_MS.
   const sub = await cariSubtitle(item, ep);
 
   // posisi dibaca sebelum recordPlay, karena recordPlay ikut menyentuh entri
@@ -1858,7 +2003,10 @@ async function openPlayer(item, ep = null) {
 
          Setengah tembus pandang supaya tidak mencuri perhatian dari filmnya,
          dan jadi pekat begitu di-hover, disentuh, atau disorot remote. -->
-    <div data-controls class="player-controls absolute left-3 top-3 z-30 flex items-center gap-2 sm:left-4 sm:top-4">
+    <!-- Posisi (left/top) dipegang .player-controls di input.css, bukan kelas
+         Tailwind: ia butuh env(safe-area-inset-*) supaya tidak tertimbun poni
+         iPhone saat layar mendatar. -->
+    <div data-controls class="player-controls z-30 flex items-center gap-2">
       <button type="button" data-back title="Kembali" aria-label="Kembali"
         class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/60 backdrop-blur-sm">
         ${ICON_BACK}
@@ -1886,9 +2034,9 @@ async function openPlayer(item, ep = null) {
          samar seperti tombol keluar: yang ini memang harus menonjol saat
          dipanggil. -->
     <button type="button" data-next
-      class="absolute right-3 top-3 z-30 hidden max-w-[calc(100%_-_1.5rem)] items-center gap-2 rounded bg-white px-4 py-2.5 text-sm font-bold text-black shadow-2xl transition hover:bg-white/85 sm:right-4 sm:top-4">
-      <span data-next-label class="truncate">Next To</span>
-      <span class="shrink-0">${ICON_NEXT}</span>
+      class="player-next z-30 hidden items-center gap-2 rounded bg-white px-4 py-2.5 text-sm font-bold text-black shadow-2xl transition hover:bg-white/85">
+      <span data-next-label data-play-label class="truncate">Next To</span>
+      <span data-play-icon class="flex shrink-0">${ICON_NEXT}</span>
     </button>
 
     <div data-minibar class="absolute inset-x-0 bottom-0 z-20 hidden items-center gap-1 bg-gradient-to-t from-black/95 via-black/70 to-transparent px-2 pb-1 pt-6">
@@ -1915,7 +2063,7 @@ async function openPlayer(item, ep = null) {
   nextUp = null;
   nextAutoShown = false; // episode baru berhak dapat kemunculan otomatisnya sendiri
   el.querySelector("[data-next]").onclick = () => {
-    if (nextUp) openPlayer(item, nextUp);
+    if (nextUp) openPlayer(item, nextUp, el.querySelector("[data-next]"));
   };
   siapkanEpisodeBerikutnya(item, ep);
 
@@ -2070,7 +2218,7 @@ function tampilkanPanduan(onSelesai) {
 
   const layar = document.createElement("div");
   layar.className =
-    "fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-black/90 p-4 py-10";
+    "lapisan-aman lapisan-tengah fixed inset-0 z-[80] overflow-y-auto bg-black/90";
 
   layar.innerHTML = `
     <div class="gate-rise w-full max-w-lg rounded-lg bg-[#181818] p-6 shadow-2xl md:p-8">
@@ -2124,6 +2272,192 @@ function tampilkanPanduan(onSelesai) {
   };
 }
 
+// ---------- Menggeser jendela kecil ----------
+// Jendela kecil bisa ditarik ke mana saja. Pojok kanan bawah tidak selalu
+// tempat yang benar -- di sanalah tombol-tombol beranda berada, dan penonton
+// yang sedang menjelajah sambil menonton butuh memindahkannya.
+//
+// Yang digeser HANYA posisi wadahnya lewat CSS. Iframe di dalamnya tidak pernah
+// disentuh maupun dipindah di DOM -- memindahkan iframe membuat browser
+// memuatnya ulang, dan filmnya akan mengulang dari awal.
+
+// Posisi pilihan penonton, dalam piksel dari kiri-atas layar. null = belum
+// pernah digeser, jadi ikut pojok bawaan dari CSS.
+let posisiMini = null;
+
+// Di bawah jarak ini, gerakan dianggap ketukan biasa -- bukan geseran. Tanpa
+// ambang ini, jari yang bergeser satu piksel saat mengetuk akan membatalkan
+// perintah "besarkan", dan jendelanya terasa tidak bisa diklik.
+const GESER_MINIMAL = 4;
+
+// Membaca lebar wilayah yang dimakan poni / home indicator pada satu sisi.
+//
+// env(safe-area-inset-*) tidak bisa dibaca JavaScript -- tidak ada API-nya.
+// Nilainya dititipkan ke custom property di input.css, lalu dibaca di sini.
+// Di perangkat tanpa poni semuanya nol, jadi rumus di bawah menyusut persis
+// jadi batas viewport biasa.
+function insetAman(sisi) {
+  const nilai = parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue(`--aman-${sisi}`)
+  );
+  return Number.isFinite(nilai) ? nilai : 0;
+}
+
+// Menahan jendela kecil di dalam wilayah yang benar-benar terlihat.
+//
+// Sebelumnya batasnya tepi viewport mentah, dan itu keliru: di iPhone, tepi
+// viewport berada DI BAWAH poni dan di balik pita home indicator. Jendela yang
+// diseret ke sana akan setengah tertutup, dan tombol Tutup serta Besarkan di
+// bilah bawahnya jatuh tepat di jalur usapan sistem -- ditekan malah keluar
+// aplikasi.
+function jepitKeLayar(x, y, lebar, tinggi) {
+  const kiri = insetAman("kiri");
+  const kanan = insetAman("kanan");
+  const atas = insetAman("atas");
+  const bawah = insetAman("bawah");
+
+  return {
+    x: Math.min(Math.max(kiri, x), Math.max(kiri, window.innerWidth - kanan - lebar)),
+    y: Math.min(Math.max(atas, y), Math.max(atas, window.innerHeight - bawah - tinggi)),
+  };
+}
+
+// Menempelkan posisi pilihan ke elemennya.
+//
+// right dan bottom WAJIB dikosongkan: keduanya diatur oleh kelas .player-mini,
+// dan kalau dibiarkan bersama left/top yang baru, jendelanya akan teregang atau
+// melompat kembali ke pojok.
+function terapkanPosisiMini(el) {
+  if (!posisiMini) {
+    el.style.left = el.style.top = el.style.right = el.style.bottom = "";
+    return;
+  }
+
+  const kotak = el.getBoundingClientRect();
+  const { x, y } = jepitKeLayar(posisiMini.x, posisiMini.y, kotak.width, kotak.height);
+  posisiMini = { x, y };
+
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
+  el.style.right = "auto";
+  el.style.bottom = "auto";
+}
+
+function lupakanPosisiMini(el) {
+  el.style.left = el.style.top = el.style.right = el.style.bottom = "";
+}
+
+// Dipasang SEKALI ke #player, bukan di dalam openPlayer. openPlayer menulis
+// ulang innerHTML setiap kali film dibuka, tapi elemen #player-nya sendiri
+// tetap yang itu-itu juga -- memasang di sana akan menumpuk pendengar yang
+// sama setiap kali penonton berpindah judul.
+function pasangGeseranMini(el) {
+  let menekan = false;
+  let menggeser = false;
+  let mulaiX = 0;
+  let mulaiY = 0;
+  let selisihX = 0;
+  let selisihY = 0;
+  let jariId = null;
+
+  el.addEventListener("pointerdown", (e) => {
+    if (playerMode !== "mini") return;
+
+    // Tombol tetap tombol. Tanpa ini, menekan "tutup" sambil bergeser sedikit
+    // akan menggeser jendelanya alih-alih menutupnya.
+    if (e.target.closest("button")) return;
+
+    // Hanya tombol kiri tetikus; klik kanan dan tengah punya tugas lain.
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+
+    const kotak = el.getBoundingClientRect();
+    selisihX = e.clientX - kotak.left;
+    selisihY = e.clientY - kotak.top;
+    mulaiX = e.clientX;
+    mulaiY = e.clientY;
+
+    menekan = true;
+    menggeser = false;
+    jariId = e.pointerId;
+
+    // Menangkap penunjuk supaya geseran tetap terlacak walau kursor keluar dari
+    // jendela kecil -- termasuk saat melintas di atas iframe, yang peristiwanya
+    // biasanya ditelan halaman di dalamnya.
+    try {
+      el.setPointerCapture(jariId);
+    } catch {
+      /* browser lama; geseran tetap jalan selama kursor di dalam */
+    }
+  });
+
+  el.addEventListener("pointermove", (e) => {
+    if (!menekan || e.pointerId !== jariId) return;
+
+    if (!menggeser) {
+      const jauh = Math.hypot(e.clientX - mulaiX, e.clientY - mulaiY);
+      if (jauh < GESER_MINIMAL) return; // masih mungkin sekadar ketukan
+      menggeser = true;
+      el.classList.add("sedang-digeser");
+    }
+
+    const kotak = el.getBoundingClientRect();
+    const { x, y } = jepitKeLayar(
+      e.clientX - selisihX,
+      e.clientY - selisihY,
+      kotak.width,
+      kotak.height
+    );
+
+    posisiMini = { x, y };
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    el.style.right = "auto";
+    el.style.bottom = "auto";
+  });
+
+  const lepas = (e) => {
+    if (!menekan || (jariId !== null && e.pointerId !== jariId)) return;
+
+    menekan = false;
+    el.classList.remove("sedang-digeser");
+
+    try {
+      el.releasePointerCapture(jariId);
+    } catch {
+      /* sudah terlepas sendiri */
+    }
+    jariId = null;
+  };
+
+  el.addEventListener("pointerup", lepas);
+  el.addEventListener("pointercancel", lepas);
+
+  // Setelah menggeser, browser tetap mengirim satu "click". Tanpa dicegat,
+  // melepas jendela di tempat baru akan langsung membesarkannya ke layar penuh
+  // -- persis kebalikan dari yang barusan dilakukan penonton.
+  //
+  // Dicegat di fase tangkap pada wadahnya, jadi berhenti sebelum sampai ke
+  // lapisan bening yang memasang perintah "besarkan".
+  el.addEventListener(
+    "click",
+    (e) => {
+      if (!menggeser) return;
+      menggeser = false;
+      e.stopPropagation();
+      e.preventDefault();
+    },
+    true
+  );
+
+  // Layar mengecil (jendela browser diubah, atau ponsel diputar) bisa
+  // meninggalkan jendela kecil di luar layar, tanpa cara mengembalikannya.
+  window.addEventListener("resize", () => {
+    if (playerMode === "mini" && posisiMini) terapkanPosisiMini(el);
+  });
+}
+
+pasangGeseranMini(document.getElementById("player"));
+
 // ---------- Besar / kecil ----------
 // Mengecil membuat film tetap berjalan di pojok sementara halaman di baliknya
 // bisa dijelajahi lagi. Yang berubah hanya kelas wadah dan tombol mana yang
@@ -2135,7 +2469,16 @@ function setPlayerMode(mode) {
   const mini = mode === "mini";
   playerMode = mode;
 
-  el.className = mini ? "player-mini" : "fixed inset-0 z-[60] bg-black";
+  el.className = mini ? "player-mini" : "pemutar-penuh fixed inset-0 z-[60] bg-black";
+
+  // WAJIB, dan urutannya sesudah className diganti.
+  //
+  // Geseran menulis left/top sebagai gaya inline, dan gaya inline mengalahkan
+  // kelas apa pun -- termasuk inset-0 milik mode layar penuh. Kalau tidak
+  // dibersihkan, film yang pernah digeser lalu dibesarkan akan tampil sebagai
+  // kotak kecil tersangkut di posisi terakhirnya, bukan memenuhi layar.
+  if (mini) terapkanPosisiMini(el);
+  else lupakanPosisiMini(el);
 
   const show = (sel, tampak, tata) => {
     const node = el.querySelector(sel);
@@ -2181,6 +2524,7 @@ function closePlayer(fromPopstate = false) {
 
   el.className = "hidden";
   el.innerHTML = ""; // menghapus iframe = playback berhenti
+  lupakanPosisiMini(el); // sisa gaya inline dari geseran tidak boleh terbawa
 
   // dilepas sebelum keluar layar penuh: kalau tidak, halaman bisa tertinggal
   // terkunci mendatar padahal filmnya sudah tidak ada
@@ -3709,7 +4053,7 @@ function profileForm(profile = null) {
 function avatarPicker(current, onPick) {
   const sheet = document.createElement("div");
   sheet.className =
-    "fixed inset-0 z-[70] overflow-y-auto bg-black/85 p-4 py-10 sm:p-8";
+    "lapisan-aman fixed inset-0 z-[70] overflow-y-auto bg-black/85";
 
   sheet.innerHTML = `
     <div class="mx-auto w-full max-w-3xl rounded-lg bg-[#181818] p-5 shadow-2xl md:p-8">
@@ -3823,7 +4167,14 @@ function playClickSound() {
 // Layar antara: gambar profil membesar di tengah, nama di bawahnya, lalu
 // pemuat. Ditahan sebentar supaya animasinya sempat terlihat walau datanya
 // sudah siap seketika.
-const SPLASH_MIN_MS = 1100;
+// Dipas ke animasinya, bukan dikira-kira. gate-zoom berjalan 0.5 detik; angka
+// ini sedikit di bawahnya karena peredupan yang menyusul menutupi sisa gerakan.
+//
+// Dulu 1100 ms, dan itu terasa lambat dengan alasan yang jelas: animasinya
+// sudah berhenti sejak 500 ms, jadi 600 ms sisanya murni menatap gambar diam.
+// Ditambah 320 ms peredupan, setiap kali masuk profil menghabiskan 1,4 detik
+// yang hampir seluruhnya menunggu tanpa ada yang dikerjakan.
+const SPLASH_MIN_MS = 420;
 
 function profileSplash(profile) {
   showGate(`
@@ -4040,6 +4391,12 @@ function settingsScreen() {
               current.showCam
             )}
             ${toggle(
+              "data-notrailer",
+              "Matikan trailer otomatis",
+              "Halaman film hanya menampilkan gambar diam, tanpa video. Nyalakan kalau iklan YouTube atau tombol-tombolnya mengganggu -- ini satu-satunya cara yang menjamin antarmuka YouTube tidak pernah muncul.",
+              current.noTrailer
+            )}
+            ${toggle(
               "data-old",
               `Sembunyikan film sebelum ${TAHUN_MINIMAL}`,
               `Judul yang rilis sebelum ${TAHUN_MINIMAL} tidak ikut tampil di beranda maupun hasil pencarian. Yang sudah ada di My List dan riwayat tetap dibiarkan. Judul yang tahun rilisnya tidak diketahui tetap tampil.`,
@@ -4096,6 +4453,7 @@ function settingsScreen() {
   bind("[data-nothumb]", "showNoThumb");
   bind("[data-cam]", "showCam");
   bind("[data-old]", "hideOld", true);
+  bind("[data-notrailer]", "noTrailer");
 
   const back = () => {
     if (!Auth.currentProfile()) {
@@ -4564,6 +4922,15 @@ Auth.onAuth((account) => {
     return;
   }
 
+  // Katalog dihangatkan SEKARANG, selagi penonton masih memilih profil atau
+  // mengetik PIN. Berkasnya 600 KB lebih, dan sebelumnya baru mulai diunduh
+  // saat baris pertama memintanya -- yaitu tepat setelah layar splash, jadi
+  // penonton menunggunya dengan menatap layar kosong.
+  //
+  // Dipanggil tanpa await: kalau ia belum selesai pun, baris pertama tinggal
+  // menyambung ke permintaan yang sama, bukan memulai yang baru.
+  snapshotKatalog();
+
   const list = Auth.allProfiles();
 
   // belum punya profil sama sekali -> langsung ke pembuatan
@@ -4705,7 +5072,7 @@ function panduanPasang() {
 
   const layar = document.createElement("div");
   layar.className =
-    "fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-black/90 p-4 py-10";
+    "lapisan-aman lapisan-tengah fixed inset-0 z-[80] overflow-y-auto bg-black/90";
 
   layar.innerHTML = `
     <div class="gate-rise w-full max-w-md rounded-lg bg-[#181818] p-6 shadow-2xl md:p-8">

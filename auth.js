@@ -396,6 +396,18 @@ export const DEFAULT_SETTINGS = {
   // perangkat: yang perlu diajari itu orangnya, dan tiap anggota keluarga punya
   // profilnya sendiri.
   tourSeen: false,
+
+  // Mematikan trailer otomatis di halaman film; yang tampil hanya gambar diam.
+  //
+  // Ada karena satu batas yang tidak bisa kita lewati: trailer datang dari
+  // YouTube, dan YouTube kadang menyisipkan iklan lengkap dengan tombol "Skip
+  // Ad" yang MENGABAIKAN controls=0. Kita sudah mengenali iklan dan memudarkan
+  // pemutarnya, tapi pengenalan itu bergantung pada kabar yang dikirim YouTube
+  // -- dan tidak ada yang bisa menjamin kabar itu selalu datang.
+  //
+  // Sakelar ini satu-satunya jaminan mutlak: tidak ada iframe YouTube sama
+  // sekali, jadi tidak ada antarmuka YouTube yang bisa muncul.
+  noTrailer: false,
 };
 
 export function settings() {

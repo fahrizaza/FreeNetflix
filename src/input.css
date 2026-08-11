@@ -146,6 +146,43 @@
 .player-controls {
   opacity: 0.75;
   transition: opacity 0.2s ease;
+
+  /* Posisinya dipegang di sini, bukan lewat kelas Tailwind, karena butuh
+     env(safe-area-inset-*).
+
+     Pemutar memaksa layar mendatar di ponsel, dan saat mendatar poni iPhone
+     pindah ke SISI -- tepat di tempat tombol kembali berada. Tanpa ini,
+     satu-satunya jalan keluar dari film tertutup poni. */
+  position: absolute;
+  left: max(0.75rem, env(safe-area-inset-left));
+  top: max(0.75rem, env(safe-area-inset-top));
+}
+
+/* Tombol episode berikutnya, berlawanan di pojok kanan. Poni bisa berada di
+   kanan juga -- tergantung ponselnya diputar ke arah mana. */
+.player-next {
+  position: absolute;
+  right: max(0.75rem, env(safe-area-inset-right));
+  top: max(0.75rem, env(safe-area-inset-top));
+
+  /* Judul episode bisa panjang. Batasnya dihitung dari sisa lebar setelah poni
+     dimakan, bukan dari angka mati -- kalau tidak, di ponsel mendatar tombolnya
+     boleh tumbuh sampai menembus wilayah poni di sisi kiri. */
+  max-width: calc(
+    100% - max(0.75rem, env(safe-area-inset-right)) - max(0.75rem, env(safe-area-inset-left))
+  );
+}
+
+@media (min-width: 640px) {
+  .player-controls {
+    left: max(1rem, env(safe-area-inset-left));
+    top: max(1rem, env(safe-area-inset-top));
+  }
+
+  .player-next {
+    right: max(1rem, env(safe-area-inset-right));
+    top: max(1rem, env(safe-area-inset-top));
+  }
 }
 
 .player-controls button {
@@ -202,6 +239,129 @@
   }
 }
 
+/* Jendela kecil bisa digeser ke mana saja.
+
+   touch-action: none wajib. Tanpa itu, jari yang menyeret jendela di ponsel
+   justru menggulir halaman di belakangnya -- browser memutuskan sendiri bahwa
+   gerakan itu miliknya sebelum kode kita sempat berkata lain. */
+.player-mini {
+  touch-action: none;
+  cursor: grab;
+}
+
+.player-mini.sedang-digeser {
+  cursor: grabbing;
+
+  /* diangkat sedikit selama digeser, supaya terasa terlepas dari halaman */
+  box-shadow: 0 18px 45px rgb(0 0 0 / 0.75);
+}
+
+/* ---------- Layar berponi (iPhone X ke atas) ----------
+   index.html memakai viewport-fit=cover, jadi halaman memenuhi layar sampai ke
+   balik poni dan sudut melengkung. Itu memang yang diinginkan untuk video --
+   tapi berarti isi halaman harus menyingkir sendiri, dan itulah yang kurang.
+
+   env(safe-area-inset-*) bernilai NOL di perangkat tanpa poni, jadi seluruh
+   aturan di bawah tidak mengubah apa pun di komputer, TV, maupun Android
+   biasa. Tidak perlu dibungkus deteksi perangkat. */
+/* JavaScript tidak bisa membaca env(safe-area-inset-*) secara langsung -- tidak
+   ada API-nya. Satu-satunya jalan adalah menitipkannya ke custom property di
+   sini, lalu membacanya lewat getComputedStyle.
+   Dipakai jepitKeLayar() untuk menahan jendela kecil pemutar supaya tidak bisa
+   diseret masuk ke bawah poni atau ke pita home indicator. */
+:root {
+  --aman-atas: env(safe-area-inset-top, 0px);
+  --aman-kanan: env(safe-area-inset-right, 0px);
+  --aman-bawah: env(safe-area-inset-bottom, 0px);
+  --aman-kiri: env(safe-area-inset-left, 0px);
+}
+
+body {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* Bilah navigasi menempel di tepi paling atas, dan di iPhone tegak di situlah
+   poni, jam, dan indikator sinyal berada. Tanpa ini logo CinemaHub dan tombol
+   profil tertimbun di baliknya. */
+header {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Layar gerbang (masuk, pemilih profil, PIN, pengaturan) posisinya fixed, jadi
+   ia tidak ikut bantalan body -- ia menghitung dari tepi layar sendiri. Tombol
+   silang di pojok kanan atasnya persis berada di bawah poni. */
+#gate {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* Isi gerbang memakai min-h-screen (100vh) -- tinggi layar PENUH, yang kini
+   lebih besar daripada ruang tersisa setelah bantalan di atas. Selisihnya
+   muncul sebagai halaman yang bisa digulir beberapa piksel tanpa alasan.
+   Dikurangi supaya tepat. */
+#gate .min-h-screen {
+  min-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+}
+
+/* Lapisan penuh layar: modal pratinjau film, panduan menonton, panduan pasang
+   aplikasi, dan pemilih foto profil.
+
+   INI YANG TERLEWAT sebelumnya. Keempatnya position:fixed, dan elemen fixed
+   diposisikan terhadap VIEWPORT -- bukan terhadap body. Jadi bantalan yang
+   dipasang di body sama sekali tidak menyentuh mereka; masing-masing harus
+   menyingkir sendiri.
+
+   Padding lamanya (p-2 py-4, p-4 py-10) berkisar 8-40 piksel, sedangkan poni
+   iPhone setinggi sekitar 59. Tombol silang di pojok kanan atas modal berada
+   16 piksel di dalam panel yang mulai 16 piksel dari atas layar -- total 32,
+   jauh di dalam wilayah poni.
+
+   Ditulis sebagai max(): angka pertama jarak normal yang memang diinginkan,
+   env() mengambil alih hanya kalau perangkatnya memang punya poni. Di komputer
+   dan Android biasa env() bernilai nol, jadi tampilannya tidak berubah. */
+.lapisan-aman {
+  padding-top: max(1rem, env(safe-area-inset-top));
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  padding-left: max(0.75rem, env(safe-area-inset-left));
+  padding-right: max(0.75rem, env(safe-area-inset-right));
+}
+
+@media (min-width: 640px) {
+  .lapisan-aman {
+    padding-top: max(2.5rem, env(safe-area-inset-top));
+    padding-bottom: max(2.5rem, env(safe-area-inset-bottom));
+    padding-left: max(1.5rem, env(safe-area-inset-left));
+    padding-right: max(1.5rem, env(safe-area-inset-right));
+  }
+}
+
+/* Memusatkan isi lapisan penuh layar TANPA membuat kepalanya hilang.
+
+   "align-items: center" di dalam wadah yang bisa digulir itu jebakan lama:
+   ketika isinya lebih tinggi daripada wadahnya, luberannya dibagi rata ke ATAS
+   dan ke bawah -- padahal scrollTop tidak pernah bisa bernilai negatif. Luberan
+   di bagian atas jadi mustahil dijangkau, selamanya. Judul dan tombol silang
+   kartu panduan benar-benar hilang, bukan sekadar perlu digulir.
+
+   Paling terasa di ponsel yang dimiringkan: tingginya tinggal sekitar 390
+   piksel, sementara kartu panduannya jauh lebih tinggi dari itu.
+
+   Margin auto memusatkan selama masih muat, lalu menyerah jadi nol begitu
+   tidak muat -- persis yang dibutuhkan. */
+.lapisan-tengah {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.lapisan-tengah > * {
+  margin-top: auto;
+  margin-bottom: auto;
+}
+
 @keyframes player-shrink {
   from {
     transform: scale(1.12);
@@ -224,4 +384,22 @@
     animation-duration: 0.01ms;
     animation-iteration-count: 1;
   }
+}
+
+/* Dasar pemutar layar penuh diangkat dari pita home indicator iPhone.
+
+   Wadahnya TIDAK bisa diberi padding untuk ini: iframe di dalamnya memakai
+   "absolute inset-0", dan elemen absolute berlabuh ke padding box -- ia akan
+   tetap merentang sampai ke dasar. Jadi tepi bawah iframe-nya sendiri yang
+   digeser, dan height:auto dipakai supaya h-full dari Tailwind tidak menariknya
+   kembali ke tinggi penuh.
+
+   Hanya berlaku di mode penuh. Jendela kecil punya penanganannya sendiri lewat
+   .player-mini, dan penjepit geserannya sudah mengenal safe-area. */
+.pemutar-penuh > iframe {
+  top: 0;
+  right: 0;
+  left: 0;
+  bottom: env(safe-area-inset-bottom, 0px);
+  height: auto;
 }
