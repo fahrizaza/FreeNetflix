@@ -4598,3 +4598,199 @@ Auth.onAuth((account) => {
   // profil ber-PIN selalu melewati pinScreen lebih dulu.
   profilePicker();
 });
+
+// ---------- Pemasangan sebagai aplikasi ----------
+// Mendaftarkan service worker; itulah syarat terakhir yang dipakai browser
+// untuk menawarkan tombol "Install" di Android, Windows, dan Mac.
+//
+// Sengaja menunggu "load": pendaftaran ini tidak mendesak, dan mendahulukannya
+// hanya membuatnya berebut jalur dengan baris film yang justru sedang ditunggu
+// penonton.
+//
+// Hanya jalan di https (atau localhost). Kalau situsnya dibuka lewat http
+// biasa, browser menolak service worker -- dan itu wajar, bukan kerusakan.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("/sw.js")
+      .catch((err) => console.debug("Service worker tidak terdaftar:", err?.message || err));
+  });
+}
+
+// ---------- Tombol "Get App" ----------
+// Memasang situs ini sebagai aplikasi di perangkat pengunjung.
+//
+// Tombolnya tidak selalu ada, dan itu disengaja: pemasangan tidak mungkin di
+// setiap browser, dan tombol yang ditekan lalu tidak terjadi apa-apa lebih
+// membingungkan daripada tombol yang memang tidak ditampilkan.
+
+// Sudah dibuka sebagai aplikasi, bukan sebagai tab browser.
+function sudahTerpasang() {
+  return (
+    window.matchMedia("(display-mode: standalone)").matches ||
+    window.matchMedia("(display-mode: minimal-ui)").matches ||
+    window.navigator.standalone === true // khusus iOS
+  );
+}
+
+// iPad sejak iPadOS 13 menyamar sebagai Mac di userAgent; satu-satunya pembeda
+// yang tersisa adalah adanya layar sentuh.
+const DI_IOS =
+  /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+  (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+// Safari asli, bukan browser lain yang menumpang namanya. Hampir semua browser
+// menulis "Safari" di identitasnya demi kompatibilitas -- Chrome dan Edge pun --
+// jadi yang menentukan justru daftar pengecualiannya.
+const DI_SAFARI =
+  /safari/i.test(navigator.userAgent) &&
+  !/chrome|chromium|crios|edg|firefox|fxios|opr|opera|samsungbrowser|android/i.test(
+    navigator.userAgent
+  );
+
+// Safari di Mac. Sejak Safari 17 (macOS Sonoma) ia bisa memasang situs lewat
+// File -> Add to Dock, tapi -- sama seperti di iPhone -- tidak pernah
+// menawarkannya sendiri. Tanpa dibedakan di sini, tombolnya tidak akan pernah
+// muncul untuk pengguna Safari Mac, padahal mereka sebenarnya bisa memasang.
+const DI_SAFARI_MAC = DI_SAFARI && !DI_IOS;
+
+// Panduan memasang secara manual. Dipakai di dua keadaan: di iOS, yang memang
+// tidak pernah menawarkan pemasangan otomatis, dan di browser mana pun yang
+// tawarannya sudah telanjur terpakai atau ditolak.
+function panduanPasang() {
+  const langkah = (nomor, isi) => `
+    <li class="flex gap-3">
+      <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-red-600 text-xs font-bold">${nomor}</span>
+      <span class="leading-relaxed">${isi}</span>
+    </li>`;
+
+  const b = (teks) => `<span class="font-semibold text-white">${teks}</span>`;
+
+  let judul;
+  let isi;
+
+  if (DI_IOS) {
+    judul = "Pasang di iPhone / iPad";
+    isi =
+      langkah(1, `Buka situs ini di ${b("Safari")} (bukan Chrome -- di iPhone hanya Safari yang bisa memasang).`) +
+      langkah(2, `Tekan tombol ${b("Bagikan")} di bagian bawah layar -- kotak dengan panah ke atas.`) +
+      langkah(3, `Gulir ke bawah, pilih ${b("Add to Home Screen")}.`) +
+      langkah(4, `Tekan ${b("Add")}. Ikon CinemaHub muncul di layar utama.`);
+  } else if (/android/i.test(navigator.userAgent)) {
+    judul = "Pasang di Android";
+    isi =
+      langkah(1, `Buka menu ${b("⋮")} di pojok kanan atas Chrome.`) +
+      langkah(2, `Pilih ${b("Install app")} atau ${b("Tambahkan ke layar utama")}.`) +
+      langkah(3, `Konfirmasi. Ikonnya muncul di layar utama seperti aplikasi lain.`);
+  } else if (DI_SAFARI_MAC) {
+    // Safari tidak punya ikon pasang di bilah alamat seperti Chrome; jalannya
+    // lewat menu File, yang praktis tidak pernah ditemukan tanpa diberi tahu.
+    judul = "Pasang di Mac (Safari)";
+    isi =
+      langkah(1, `Buka menu ${b("File")} di bilah menu atas layar.`) +
+      langkah(2, `Pilih ${b("Add to Dock…")}.`) +
+      langkah(3, `Beri nama kalau perlu, lalu tekan ${b("Add")}. CinemaHub masuk ke Dock dan berjalan sebagai jendela sendiri.`) +
+      langkah(
+        4,
+        `Tidak menemukan ${b("Add to Dock")}? Berarti Safari Anda di bawah versi 17. ` +
+          `Perbarui macOS, atau pasang lewat ${b("Chrome")} yang juga bisa.`
+      );
+  } else {
+    judul = "Pasang di komputer";
+    isi =
+      langkah(1, `Pakai ${b("Chrome")} atau ${b("Edge")} -- Firefox di komputer belum mendukung ini.`) +
+      langkah(2, `Lihat ujung kanan bilah alamat: ada ikon ${b("layar dengan panah ke bawah")}. Klik ikon itu.`) +
+      langkah(3, `Tekan ${b("Install")}. CinemaHub terbuka sebagai jendela sendiri dan masuk ke daftar aplikasi.`);
+  }
+
+  const layar = document.createElement("div");
+  layar.className =
+    "fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto bg-black/90 p-4 py-10";
+
+  layar.innerHTML = `
+    <div class="gate-rise w-full max-w-md rounded-lg bg-[#181818] p-6 shadow-2xl md:p-8">
+      <h2 class="text-xl font-bold md:text-2xl">${esc(judul)}</h2>
+      <p class="mt-1 text-sm text-neutral-400">
+        Aplikasinya berjalan tanpa bilah browser, dengan ikon sendiri di perangkat Anda.
+      </p>
+
+      <ol class="mt-6 space-y-3 text-sm text-neutral-300">${isi}</ol>
+
+      <button type="button" data-tutup
+        class="mt-6 w-full rounded bg-red-600 py-3 font-semibold hover:bg-red-500">Mengerti</button>
+    </div>
+  `;
+
+  const tutup = () => layar.remove();
+  layar.querySelector("[data-tutup]").onclick = tutup;
+  layar.onclick = (e) => {
+    if (e.target === layar) tutup();
+  };
+
+  document.body.append(layar);
+  layar.querySelector("[data-tutup]").focus({ preventScroll: true });
+}
+
+function siapkanTombolPasang() {
+  const btn = document.getElementById("get-app");
+  if (!btn) return;
+
+  const tampak = (ya) => {
+    btn.classList.toggle("hidden", !ya);
+    btn.classList.toggle("flex", ya);
+  };
+
+  // Sudah terpasang -> tidak ada yang perlu ditawarkan.
+  if (sudahTerpasang()) return;
+
+  // Safari -- di iPhone maupun di Mac -- tidak pernah menyalakan
+  // "beforeinstallprompt", jadi menunggunya berarti tombolnya tidak akan pernah
+  // muncul di sana. Padahal justru merekalah yang paling butuh: Share -> Add to
+  // Home Screen dan File -> Add to Dock sama-sama mustahil ditemukan sendiri.
+  //
+  // Browser yang memang tidak bisa memasang apa pun (Firefox di komputer)
+  // sengaja tidak masuk daftar ini: tombolnya tetap tersembunyi di sana, karena
+  // tidak ada langkah apa pun yang bisa kita berikan.
+  if (DI_IOS || DI_SAFARI_MAC || window.__tawaranPasang) tampak(true);
+
+  window.addEventListener("pasang-tersedia", () => {
+    if (!sudahTerpasang()) tampak(true);
+  });
+
+  btn.onclick = async () => {
+    const tawaran = window.__tawaranPasang;
+
+    // Tidak ada tawaran resmi -- iOS, atau tawarannya sudah terpakai sekali.
+    if (!tawaran) {
+      panduanPasang();
+      return;
+    }
+
+    btn.disabled = true;
+    try {
+      tawaran.prompt();
+      const { outcome } = await tawaran.userChoice;
+
+      // Tawaran hanya sah SEKALI. Dipakai lagi akan ditolak browser, jadi
+      // dibuang -- klik berikutnya jatuh ke panduan manual, yang setidaknya
+      // memberi tahu pengguna harus berbuat apa.
+      window.__tawaranPasang = null;
+
+      if (outcome === "accepted") tampak(false);
+    } catch (err) {
+      console.debug("Pemasangan gagal dimulai:", err?.message || err);
+      panduanPasang();
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  // Bisa juga terpasang lewat jalur lain (ikon di bilah alamat), jadi tombolnya
+  // ikut menghilang -- bukan hanya saat lewat tombol ini.
+  window.addEventListener("appinstalled", () => {
+    window.__tawaranPasang = null;
+    tampak(false);
+  });
+}
+
+siapkanTombolPasang();

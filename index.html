@@ -11,6 +11,38 @@
        Berkas di bawah ini potongan persegi dari gambar yang sama. -->
   <link rel="icon" type="image/png" sizes="256x256" href="/assets/favicon.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
+
+  <!-- Membuat situs ini bisa dipasang sebagai aplikasi di Android, Windows,
+       dan Mac. Yang dipasang tetap situs yang sama, bukan salinan berkasnya --
+       jadi alamat asalnya tetap domain ini, dan pemutar embed maupun Firebase
+       bekerja persis seperti di browser. -->
+  <link rel="manifest" href="/manifest.json">
+
+  <!-- Mewarnai bilah status Android agar menyatu dengan halaman gelapnya -->
+  <meta name="theme-color" content="#030712">
+
+  <!-- iOS tidak membaca manifest; dua baris ini padanannya di sana -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="CinemaHub">
+
+  <!-- Browser menawarkan pemasangan lewat peristiwa "beforeinstallprompt", dan
+       tawaran itu HANYA berlaku kalau ditahan tepat saat menyala. Masalahnya ia
+       sering menyala lebih dulu daripada script.js -- berkas itu type="module",
+       yang selalu ditunda sampai seluruh HTML selesai dibaca.
+
+       Kalau tawarannya lewat begitu saja, tombol "Get App" tidak akan pernah
+       bisa memasang apa pun. Karena itu ditangkap di sini, di skrip biasa yang
+       jalan seketika, lalu dititipkan ke window untuk diambil script.js. -->
+  <script>
+    window.__tawaranPasang = null;
+    window.addEventListener("beforeinstallprompt", (e) => {
+      e.preventDefault(); // tahan spanduk bawaan Chrome; tombol kita yang memicunya
+      window.__tawaranPasang = e;
+      window.dispatchEvent(new Event("pasang-tersedia"));
+    });
+  </script>
+
   <title>CinemaHub</title>
 </head>
 <body class="bg-gray-950 text-white">
@@ -45,6 +77,28 @@
           />
           <button type="submit" class="hidden rounded border border-neutral-700 px-3 py-2 text-sm hover:bg-neutral-800 sm:block">Search</button>
         </form>
+
+        <!-- Tersembunyi sampai script.js memastikan pemasangan memang mungkin.
+             Ditampilkan hanya kalau browser menawarkannya (atau di iOS, yang
+             tidak pernah menawarkan tapi tetap bisa dipasang manual), dan
+             hilang begitu aplikasinya sudah terpasang -- tombol yang tidak bisa
+             melakukan apa-apa lebih buruk daripada tombol yang tidak ada.
+
+             Teksnya disembunyikan di layar sempit supaya tidak berebut tempat
+             dengan kotak pencarian; ikon panahnya tetap terbaca sendiri. -->
+        <button
+          id="get-app"
+          type="button"
+          title="Pasang CinemaHub sebagai aplikasi"
+          class="hidden shrink-0 items-center gap-2 rounded bg-red-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-red-500 disabled:opacity-60"
+        >
+          <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3v12m0 0 4-4m-4 4-4-4" />
+            <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+          </svg>
+          <span class="hidden sm:inline">Get App</span>
+        </button>
         <div class="relative shrink-0">
           <button id="profile-button" type="button" class="flex items-center gap-2">
             <span id="profile-avatar" class="block h-8 w-8 overflow-hidden rounded"></span>

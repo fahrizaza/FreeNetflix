@@ -1668,6 +1668,9 @@
   .disabled\:opacity-50:disabled {
     opacity: 50%;
   }
+  .disabled\:opacity-60:disabled {
+    opacity: 60%;
+  }
   .has-\[\:checked\]\:border-red-600:has(:is(:checked)) {
     border-color: var(--color-red-600);
   }
@@ -1695,6 +1698,9 @@
     }
     .sm\:block {
       display: block;
+    }
+    .sm\:inline {
+      display: inline;
     }
     .sm\:h-5 {
       height: calc(var(--spacing) * 5);

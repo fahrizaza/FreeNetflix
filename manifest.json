@@ -1,0 +1,37 @@
+{
+  "name": "CinemaHub",
+  "short_name": "CinemaHub",
+  "description": "Nonton film dan serial: trending, anime, drama Korea, dan film Indonesia.",
+  "lang": "id",
+  "dir": "ltr",
+
+  "start_url": "/",
+  "scope": "/",
+
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+
+  "background_color": "#030712",
+  "theme_color": "#030712",
+
+  "icons": [
+    {
+      "src": "/assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
