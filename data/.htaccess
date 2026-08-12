@@ -1,0 +1,15 @@
+# Katalog harian. Disegarkan tiap kali dipush, jadi tidak boleh disimpan lama.
+#
+# Aturannya ditulis tanpa <FilesMatch>: LiteSpeed di hosting ini mengabaikan
+# Header yang dibungkus FilesMatch (lihat catatan panjang di .htaccess akar).
+# Folder ini memang hanya berisi katalog dan manifes gambar, jadi satu aturan
+# untuk seluruh folder sudah tepat sasaran.
+#
+# 30 menit: cukup untuk menahan permintaan berulang dari orang yang sama, cukup
+# pendek supaya katalog yang baru dipush sampai ke pengunjung di hari yang sama.
+
+<IfModule mod_headers.c>
+  Header set Cache-Control "public, max-age=1800"
+</IfModule>
+
+AddType application/json .json

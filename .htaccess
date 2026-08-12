@@ -20,21 +20,24 @@ AddType image/webp .webp
 </IfModule>
 
 # ---- Cache ----
-# Katalog disegarkan harian, jadi jangan disimpan lama oleh browser.
+# TANPA <FilesMatch>. Ini bukan gaya penulisan, ini keharusan.
+#
+# Versi sebelumnya membungkus aturan ini dalam <FilesMatch "\.(js|mjs|css)$">,
+# dan LiteSpeed di hosting ini MENGABAIKANNYA tanpa suara -- diperiksa langsung
+# ke server: script.js balik dengan max-age=604800 (7 hari) dari setelan bawaan
+# server, bukan 3600 yang tertulis di sini. AddType dan RewriteRule di berkas
+# yang sama jalan normal, jadi masalahnya khusus Header di dalam FilesMatch.
+#
+# Tujuh hari itu berbahaya, bukan cuma boros: index.html tidak ikut tercache,
+# jadi pengunjung lama bisa memasangkan HTML baru dengan script.js seminggu lalu
+# -- persis jenis kerusakan yang bikin layar hitam.
+#
+# Satu jam untuk semuanya, lalu ditimpa per folder oleh .htaccess di dalamnya:
+#   data/.htaccess       30 menit  (katalog disegarkan harian)
+#   assets/img/.htaccess setahun   (nama berkas ikut berubah kalau isinya beda)
 <IfModule mod_headers.c>
-  <FilesMatch "\.(js|mjs|css)$">
-    Header set Cache-Control "public, max-age=3600"
-  </FilesMatch>
-  <FilesMatch "katalog\.json$">
-    Header set Cache-Control "public, max-age=1800"
-  </FilesMatch>
+  Header set Cache-Control "public, max-age=3600"
 </IfModule>
-
-# Aturan cache untuk gambar katalog ada di assets/img/.htaccess, bukan di sini.
-# Sengaja dipisah: aturan setahun-immutable hanya boleh mengenai berkas yang
-# namanya ikut berubah kalau isinya berubah. Ikon dan foto profil di /assets/
-# namanya tetap, jadi kalau ikut kena aturan itu, mengganti ikon berarti
-# pengunjung lama tetap melihat yang lama sampai setahun ke depan.
 
 # ---- SPA fallback ----
 # index.html satu-satunya halaman; JavaScript yang menggambar sisanya. Tanpa ini,
