@@ -21,7 +21,7 @@ const VERSI = "cinemahub-v1";
 // aplikasi -- situs streaming memang tidak ada gunanya tanpa internet.
 const KERANGKA = ["/", "/index.html", "/src/output.css", "/assets/icon-192.png"];
 
-// Video hero 14 MB tidak boleh masuk cache: ia sudah ditahan agar hanya
+// Video hero tidak boleh masuk cache: ia sudah ditahan agar hanya
 // diunduh di jaringan yang layak, dan menyimpannya membuang kuota penyimpanan
 // pengguna demi sesuatu yang hanya jadi latar beranda.
 const JANGAN_SIMPAN = /\.(mp4|webm)$/i;

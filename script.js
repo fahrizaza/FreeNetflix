@@ -358,34 +358,66 @@ const SUB_BAHASA = [
 // Pemutar tidak boleh tertahan lama hanya demi subtitle. Lewat batas ini,
 // filmnya tetap diputar tanpa subtitle -- menonton tanpa teks jauh lebih baik
 // daripada menunggu layar hitam.
-const SUB_TIMEOUT_MS = 2500;
+//
+// 900 ms, bukan angka karangan: pencarian yang BERHASIL diukur selesai sekitar
+// 0,7 detik, sedangkan yang lewat dari itu praktis selalu berakhir dengan
+// tangan kosong. Menunggu lebih lama hanya menambah jeda tanpa menambah
+// peluang. Lagi pula batas ini jarang tersentuh sekarang -- pencariannya sudah
+// dihangatkan sejak modal dibuka, jadi umumnya hasilnya tinggal diambil dari
+// cache tanpa menunggu sama sekali.
+const SUB_TIMEOUT_MS = 900;
 
 const subCache = new Map();
 
-// Bentuk respons Wyzie tidak bisa saya pastikan tanpa kunci (dokumentasinya
-// SPA dan sumbernya sudah ditutup), jadi pembacaan di bawah sengaja longgar:
-// ia menerima array maupun objek berbungkus, dan mengambil field pertama yang
-// isinya tampak seperti URL berkas subtitle.
+// Membaca daftar subtitle dari balasan Wyzie.
 //
-// Respons pertama dicetak sekali ke console supaya bentuk aslinya bisa dilihat
-// dan pembacaan ini dipersempit kalau perlu.
-let subLogged = false;
-
-function bacaHasilSubtitle(data) {
+// Versi sebelumnya menebak: ia mencari satu nilai yang SEKALIGUS berupa URL dan
+// mengandung ".srt". Skema aslinya tidak pernah begitu -- URL unduhannya berupa
+// token tanpa ekstensi, sedangkan ekstensinya ada di field terpisah:
+//
+//   url      = https://dl.opensubtitles.org/en/download/.../vrf-19b90c56
+//   format   = srt
+//   fileName = Nama.Film.2026.1080p.srt
+//
+// Tidak ada satu field pun yang memenuhi kedua syarat itu, jadi pembacaannya
+// SELALU mengembalikan kosong. Akibatnya subtitle tidak pernah menyala sekali
+// pun, dan setiap pemutaran tetap membayar waktu tunggu pencariannya.
+//
+// Sekarang skemanya sudah diketahui, jadi field-nya dibaca langsung.
+function bacaHasilSubtitle(data, kodeBahasa = "") {
   const daftar = Array.isArray(data) ? data : data?.results || data?.data || data?.subtitles || [];
   if (!Array.isArray(daftar)) return "";
 
-  for (const entri of daftar) {
-    if (typeof entri === "string" && /^https?:\/\//.test(entri)) return entri;
+  const layak = daftar.filter((entri) => {
+    if (!entri || typeof entri.url !== "string" || !/^https?:\/\//.test(entri.url)) return false;
 
-    for (const nilai of Object.values(entri || {})) {
-      if (typeof nilai === "string" && /^https?:\/\/\S+/.test(nilai) && /\.(srt|vtt)/i.test(nilai)) {
-        return nilai;
-      }
-    }
-  }
+    // Pemutar hanya mengerti dua format ini. Kalau format tidak disebutkan,
+    // entrinya tetap diterima -- menolak karena data yang tidak lengkap lebih
+    // merugikan daripada mencoba.
+    if (entri.format && !/^(srt|vtt)$/i.test(entri.format)) return false;
 
-  return "";
+    // Bahasa dikonfirmasi ulang dari isinya, bukan sekadar percaya pada
+    // parameter permintaan.
+    if (kodeBahasa && entri.language && entri.language !== kodeBahasa) return false;
+
+    return true;
+  });
+
+  if (!layak.length) return "";
+
+  const unduhan = (e) => Number(e.downloadCount) || 0;
+
+  // Yang paling banyak diunduh diutamakan -- itu penanda paling jujur bahwa
+  // terjemahannya enak dibaca dan waktunya pas, sesuatu yang tidak bisa kita
+  // nilai sendiri dari sini.
+  //
+  // Versi untuk tunarungu dikesampingkan lebih dulu karena ia menyisipkan
+  // keterangan suara ("[pintu berderit]") yang mengganggu kalau bukan itu yang
+  // dicari -- tapi tetap dipakai kalau memang tidak ada pilihan lain.
+  const skor = (e) => (e.isHearingImpaired ? 0 : 1);
+
+  layak.sort((a, b) => skor(b) - skor(a) || unduhan(b) - unduhan(a));
+  return layak[0].url;
 }
 
 async function cariSubtitle(item, ep = null) {
@@ -418,14 +450,7 @@ async function cariSubtitle(item, ep = null) {
       const res = await fetch(`${SUB_ENDPOINT}?${query}`, { signal: batal.signal });
       if (!res.ok) continue;
 
-      const data = await res.json();
-
-      if (!subLogged) {
-        subLogged = true;
-        console.debug("Respons subtitle pertama:", data);
-      }
-
-      const url = bacaHasilSubtitle(data);
+      const url = bacaHasilSubtitle(await res.json(), bahasa.kode);
       if (url) {
         hasil = { url, lang: bahasa.kode, label: bahasa.label };
         break;
@@ -1351,11 +1376,53 @@ async function loadDetail(item, modal) {
     playBtn.disabled = false;
     playBtn.onclick = () => openPlayer(item, firstEpisode, playBtn);
     paintResume(item, modal);
+
+    // Dua persiapan yang dikerjakan SEKARANG, selagi penonton membaca sinopsis.
+    // Keduanya dulu baru dimulai saat Play ditekan, jadi waktunya dibayar penuh
+    // sebagai layar hitam.
+    hangatkanSubtitle(item, firstEpisode);
+    sambungkanKePemutar();
   } else {
     set("[data-imdb]", "tidak ada ID IMDb");
   }
 
   if (item.type === "SHOW" && !blocked) loadEpisodes(item, modal);
+}
+
+// Mencari subtitle lebih awal supaya hasilnya sudah ada di subCache saat tombol
+// Play ditekan.
+//
+// Tidak di-await dan galatnya ditelan: ini murni persiapan. Kalau gagal atau
+// belum selesai, openPlayer tetap mencarinya sendiri seperti biasa -- yang
+// hilang cuma keuntungan waktunya, bukan fiturnya.
+function hangatkanSubtitle(item, ep) {
+  cariSubtitle(item, ep).catch(() => {});
+}
+
+// Membuka jalur ke domain pemutar sebelum dibutuhkan.
+//
+// Membuat iframe berarti browser harus mencari DNS, bersalaman TLS, baru
+// meminta halamannya -- dan semuanya baru dimulai pada saat penonton sudah
+// menatap layar hitam. preconnect memindahkan pekerjaan itu ke saat modal
+// dibuka, ketika penontonnya masih membaca.
+//
+// Sengaja tidak ditaruh statis di <head>: browser membuang preconnect yang
+// tidak dipakai setelah beberapa detik, sedangkan orang bisa menjelajah
+// belasan menit sebelum memutar sesuatu. Dipasang saat modal dibuka, jaraknya
+// ke klik Play hampir selalu pas.
+function sambungkanKePemutar() {
+  const asal = new URL(PLAYER).origin;
+  if (document.querySelector(`link[rel="preconnect"][href="${asal}"]`)) return;
+
+  for (const rel of ["preconnect", "dns-prefetch"]) {
+    const link = document.createElement("link");
+    link.rel = rel;
+    link.href = asal;
+    // Halaman embed diminta sebagai dokumen biasa, bukan lintas-asal beraset,
+    // jadi tanpa crossorigin -- memakainya justru membuka koneksi kedua yang
+    // tidak akan terpakai.
+    document.head.append(link);
+  }
 }
 
 // Label umur di samping HD/CAM. Kotaknya sengaja sebentuk dengan label kualitas
@@ -1766,6 +1833,33 @@ let lastSavedSec = 0; // posisi saat terakhir DITULIS -- milik saringan Firestor
 let lastReportedSec = 0; // posisi terakhir yang DIKABARKAN -- untuk hitung sisa waktu
 let progressLogged = false;
 
+// Sudahkah film benar-benar mulai? Selama false, layar tunggu menutupi iframe.
+let pemutarSiap = false;
+
+// Jaring pengaman untuk layar tunggu. Kabar "playing" adalah penanda yang
+// benar, tapi kita tidak boleh bergantung sepenuhnya padanya: pemutar bisa
+// berganti versi, atau kabarnya tidak pernah sampai. Lewat batas ini layarnya
+// dibuang apa pun yang terjadi -- menampilkan film yang mungkin belum siap
+// masih jauh lebih baik daripada menyembunyikan film yang sudah jalan.
+const TUNGGU_MAKSIMAL_MS = 12000;
+
+let jamTunggu = null;
+
+function bukaLayarTunggu() {
+  clearTimeout(jamTunggu);
+  jamTunggu = null;
+  pemutarSiap = true;
+
+  const layar = document.getElementById("player")?.querySelector("[data-tunggu]");
+  if (!layar) return;
+
+  // Dipudarkan, bukan dihapus mendadak: pergantian yang tiba-tiba dari layar
+  // tunggu ke adegan pertama terbaca sebagai kedipan.
+  layar.style.transition = "opacity .35s ease";
+  layar.style.opacity = "0";
+  setTimeout(() => layar.remove(), 400);
+}
+
 function savedPosition(item, ep) {
   const saved = Auth.progressOf(item.id);
   if (!saved || saved.key !== Auth.playKey(ep)) return 0;
@@ -1814,6 +1908,12 @@ window.addEventListener("message", (e) => {
   const status = info.player_status;
   const { seconds, duration } = readProgress(info);
   const { item, ep } = nowPlaying;
+
+  // Kabar apa pun berarti embed sudah hidup; "playing" berarti gambarnya sudah
+  // ada. Layar tunggu dibuang di sini, bukan saat iframe selesai dimuat --
+  // "iframe selesai" cuma berarti halamannya terkirim, filmnya sendiri masih
+  // dicari sesudah itu.
+  if (!pemutarSiap && status === "playing") bukaLayarTunggu();
 
   // Tamat = tidak ada yang perlu dilanjutkan. Posisinya dinolkan supaya judulnya
   // tidak menyisakan bilah hampir penuh yang kalau ditekan langsung ke credit.
@@ -1925,11 +2025,13 @@ async function openPlayer(item, ep = null, tombol = null) {
 async function lanjutkanPemutaran(item, ep) {
   // Subtitle harus sudah ada SEBELUM iframe dibuat: sub_url adalah parameter
   // URL, dan mengubahnya nanti berarti memuat ulang iframe -- filmnya akan
-  // mengulang dari awal. Jadi ditunggu di sini, dengan batas waktu, dan
-  // langsung nihil kalau kuncinya belum diisi.
+  // mengulang dari awal.
   //
-  // Inilah penantian yang membuat tombol Play terasa mati sebelum ada penanda
-  // "Memuat...": pencarian subtitle bisa memakan waktu sampai SUB_TIMEOUT_MS.
+  // Biasanya ini TIDAK menunggu apa pun: hangatkanSubtitle() sudah memanggilnya
+  // sejak modal dibuka, jadi hasilnya tinggal diambil dari subCache. Penantian
+  // sungguhan hanya terjadi kalau Play ditekan seketika, atau kalau episode
+  // yang dipilih berbeda dari yang dihangatkan -- dan itu pun dibatasi
+  // SUB_TIMEOUT_MS.
   const sub = await cariSubtitle(item, ep);
 
   // posisi dibaca sebelum recordPlay, karena recordPlay ikut menyentuh entri
@@ -1937,25 +2039,22 @@ async function lanjutkanPemutaran(item, ep) {
   const url = playerUrl(item, ep, savedPosition(item, ep), sub);
   if (!url) return;
 
-  // trailer di modal dan video hero dihentikan dulu, kalau tidak suaranya
-  // bertabrakan dengan film yang mulai diputar di atasnya
+  // Dua ini tetap didahulukan walau tidak gratis: keduanya menghentikan suara
+  // yang kalau tidak akan bertumpuk dengan film. hentikanHero() sekaligus
+  // membatalkan unduhan video hero, jadi jalur jaringannya bebas untuk film.
   stopModalTrailer();
-  pauseHero();
+  hentikanHero();
 
   // Judul lain bisa dipilih selagi pemutar mengecil. innerHTML di bawah akan
   // membuang iframe yang sedang jalan, jadi posisi tontonannya ditulis dulu --
   // kalau tidak, menit terakhirnya hilang bersama iframe-nya.
   if (nowPlaying) Auth.flushProgress();
 
-  // satu-satunya pintu pemutaran, jadi cukup dicatat di sini; untuk serial
-  // ep sudah membawa season dan nomor episodenya
-  Auth.recordPlay(item, ep);
-  renderHistoryRow();
-
   // dipakai penerima kabar posisi di bawah: tanpa ini ia tidak tahu kabar yang
   // masuk itu milik tayangan yang mana
   nowPlaying = { item, ep };
   lastSavedSec = 0;
+  pemutarSiap = false;
 
   const el = document.getElementById("player");
 
@@ -1986,6 +2085,33 @@ async function lanjutkanPemutaran(item, ep) {
       allow="autoplay; picture-in-picture; encrypted-media; web-share"
       referrerpolicy="origin"
     ></iframe>
+
+    <!-- Layar tunggu, menutupi iframe sampai filmnya benar-benar berjalan.
+
+         Tanpa ini yang terlihat cuma bidang hitam kosong selama embed mencari
+         dan menyiapkan streamnya. Hitam polos tanpa keterangan selalu terasa
+         jauh lebih lama daripada durasi sebenarnya, dan tidak memberi tahu
+         apakah situsnya sedang bekerja atau sudah rusak.
+
+         Dibuang oleh penerima PLAYER_EVENT begitu status "playing" pertama
+         masuk. Kalau kabar itu tidak pernah datang, jaring pengaman di bawah
+         yang membuangnya -- lapisan ini tidak boleh menutupi film selamanya. -->
+    <div data-tunggu
+      class="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black">
+      ${
+        item.backdrop
+          ? `<img src="${esc(item.backdrop)}" alt="" aria-hidden="true"
+               class="absolute inset-0 h-full w-full object-cover opacity-25" />`
+          : ""
+      }
+      <div class="relative flex flex-col items-center gap-4">
+        <svg viewBox="0 0 24 24" class="h-10 w-10 animate-spin text-white/90" fill="none"
+          stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M12 3a9 9 0 1 0 9 9" stroke-linecap="round"/>
+        </svg>
+        <p class="px-6 text-center text-sm text-neutral-300">Menyiapkan ${esc(item.title)}...</p>
+      </div>
+    </div>
 
     <!-- Saat mengecil, klik jatuh ke dalam iframe dan tidak pernah sampai ke
          kita. Lapisan ini yang menangkapnya supaya jendela kecilnya bisa
@@ -2052,6 +2178,17 @@ async function lanjutkanPemutaran(item, ep) {
     </div>
   `;
 
+  // BARU DI SINI pembukuannya dikerjakan, sesudah iframe ada.
+  //
+  // Dulu semuanya berjalan sebelum el.innerHTML, jadi embed baru mulai dimuat
+  // setelah semua ini selesai. renderHistoryRow() bahkan bisa menembak TMDB
+  // untuk sertifikasi umur -- permintaan jaringan yang berebut jalur dengan
+  // film yang sedang ditunggu penonton.
+  //
+  // Sekarang iframe sudah memuat duluan, dan ini menyusul di belakangnya.
+  Auth.recordPlay(item, ep);
+  renderHistoryRow();
+
   el.querySelector("[data-back]").onclick = () => closePlayer();
   el.querySelector("[data-shut]").onclick = () => closePlayer();
   el.querySelector("[data-min]").onclick = () => setPlayerMode("mini");
@@ -2066,6 +2203,10 @@ async function lanjutkanPemutaran(item, ep) {
     if (nextUp) openPlayer(item, nextUp, el.querySelector("[data-next]"));
   };
   siapkanEpisodeBerikutnya(item, ep);
+
+  // Jaring pengaman layar tunggu, dipasang setelah iframe ada.
+  clearTimeout(jamTunggu);
+  jamTunggu = setTimeout(bukaLayarTunggu, TUNGGU_MAKSIMAL_MS);
 
   // Tiga pemicu, dan ketiganya memakai petak yang benar-benar kita miliki --
   // satu-satunya tempat yang peristiwanya tidak ditelan iframe.
@@ -2533,6 +2674,9 @@ function closePlayer(fromPopstate = false) {
 
   playerMode = "full"; // pemutaran berikutnya selalu mulai besar
   clearTimeout(nextTimer);
+  clearTimeout(jamTunggu);
+  jamTunggu = null;
+  pemutarSiap = false;
   nextUp = null;
   lastDuration = 0;
   lastReportedSec = 0;
@@ -2543,7 +2687,10 @@ function closePlayer(fromPopstate = false) {
   Auth.flushProgress();
   renderHistoryRow();
 
-  playHero(); // beranda kembali terlihat -> hero boleh berbunyi lagi
+  // src hero dilepas saat film dibuka untuk membebaskan jalur jaringan, jadi
+  // harus dipasang kembali -- playHero() saja tidak cukup, videonya sudah tidak
+  // punya sumber untuk diputar.
+  pulihkanHero();
 
   if (!fromPopstate && history.state?.netflixPlayer) history.back();
 }
@@ -2601,8 +2748,9 @@ window.addEventListener("popstate", () => closePlayer(true));
 const HERO = {
   tmdbId: 111110, // ONE PIECE (2023)
   type: "SHOW",
-  video:
-    "assets/YTDown.com_YouTube_ONE-PIECE-Official-Trailer-Netflix_Media_Ades3pQbeh8_002_720p.mp4",
+  // 30 detik pertama dari trailer resminya. Dipotong tanpa dikodekan ulang,
+  // jadi gambarnya persis sama dengan aslinya, hanya 2,4 MB bukan 14 MB.
+  video: "assets/hero.mp4",
 };
 
 async function loadHero() {
@@ -2617,7 +2765,7 @@ async function loadHero() {
 }
 
 // ---------- Trailer di hero ----------
-// Berkasnya 14 MB. Tanpa penjagaan, tiap pengunjung mengunduhnya sekalipun
+// Berkasnya 2,4 MB. Tanpa penjagaan, tiap pengunjung mengunduhnya sekalipun
 // tidak pernah melihatnya. Karena itu video baru disentuh setelah semua syarat
 // di bawah terpenuhi, dan dilepas lagi begitu tidak terlihat.
 function heroVideoAllowed() {
@@ -2680,6 +2828,45 @@ function pauseHero() {
   heroVideo?.pause();
 }
 
+// Menghentikan hero SEKALIGUS membatalkan unduhannya.
+//
+// pause() saja tidak cukup: ia menghentikan pemutaran, tapi browser tetap
+// menyedot sisa berkasnya di latar belakang. Tepat saat film dibuka,
+// jalur jaringan justru sedang paling dibutuhkan -- dan yang merebutnya adalah
+// video latar yang bahkan tidak terlihat lagi.
+//
+// Melepas src lalu memanggil load() adalah cara resmi membatalkan unduhan
+// media yang sedang berjalan. URL-nya diingat supaya bisa dipasang kembali.
+// Penanda bahwa KITA yang melepas src-nya.
+//
+// Tanpa ini pulihkanHero() tidak bisa membedakan dua keadaan yang sama-sama
+// tampak sebagai "video tanpa src": video yang barusan kita batalkan, dan video
+// yang memang BELUM PERNAH dimuat. Yang kedua terjadi setiap kali penonton
+// langsung mencari film tanpa menggulir ke beranda -- dan memulihkannya di situ
+// berarti memulai unduhan yang justru sengaja ditunda oleh setupHeroVideo.
+let heroDihentikan = false;
+
+function hentikanHero() {
+  if (!heroVideo) return;
+
+  heroVideo.pause();
+  if (!heroVideo.getAttribute("src")) return;
+
+  heroVideo.removeAttribute("src");
+  heroVideo.load(); // memutus koneksi unduhannya
+  heroDihentikan = true;
+}
+
+// Dipasang lagi saat pemutar ditutup. Berkasnya sudah ada di cache browser,
+// jadi ini tidak berarti mengunduh ulang dari nol.
+function pulihkanHero() {
+  if (!heroDihentikan || !heroVideo) return;
+  heroDihentikan = false;
+
+  heroVideo.src = HERO.video;
+  playHero(); // memeriksa sendiri apakah hero memang sedang terlihat
+}
+
 function setupHeroVideo() {
   const video = document.getElementById("hero-video");
   const mute = document.getElementById("hero-mute");
@@ -2740,7 +2927,7 @@ function setupHeroVideo() {
   });
 
   // unduhan ditunda sampai halaman tidak sibuk lagi, supaya baris film dan
-  // gambarnya yang lebih penting tidak berebut jalur dengan video 14 MB
+  // gambarnya yang lebih penting tidak berebut jalur dengan video hero
   const later = window.requestIdleCallback || ((fn) => setTimeout(fn, 1500));
   later(
     () => {

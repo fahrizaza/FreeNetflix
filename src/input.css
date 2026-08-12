@@ -400,6 +400,20 @@ header {
   top: 0;
   right: 0;
   left: 0;
-  bottom: env(safe-area-inset-bottom, 0px);
-  height: auto;
+
+  /* Tingginya WAJIB dihitung, tidak boleh diserahkan ke pasangan top/bottom.
+     Dua sebabnya, dan keduanya membuat versi sebelumnya rusak total:
+
+     1. iframe itu "replaced element". Pada elemen seperti ini height:auto
+        berarti TINGGI BAWAAN -- 150 piksel -- bukan "regangkan sampai bottom".
+        Videonya mengerut jadi pita tipis di puncak layar, dan sisanya hitam.
+
+     2. Kalaupun height dibuat auto dengan benar, kelas h-full dari Tailwind
+        tetap memaksa height:100%, dan begitu top, bottom, DAN height sama-sama
+        terisi, CSS mengabaikan bottom. Insetnya tidak akan pernah berlaku.
+
+     bottom:auto menjaga supaya tidak ada tiga nilai bersamaan. Di perangkat
+     tanpa poni env() bernilai nol, jadi hasilnya persis 100% seperti semula. */
+  bottom: auto;
+  height: calc(100% - env(safe-area-inset-bottom, 0px));
 }
