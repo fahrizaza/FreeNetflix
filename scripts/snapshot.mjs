@@ -15,14 +15,44 @@ import { SECTIONS, TMDB, TMDB_KEY, normalize, pickLogo } from "../config.js";
 
 const KELUARAN = new URL("../data/katalog.json", import.meta.url).pathname;
 
-// Logo diunduh untuk sekian kartu pertama tiap baris -- yang langsung terlihat
-// di layar. Sisanya tetap diambil browser secara malas seperti biasa; memaksa
-// semua logo masuk snapshot menggandakan requestnya demi kartu yang mungkin
-// tidak pernah tergulir.
-const LOGO_PER_BARIS = 8;
 const JEDA_MS = 60; // sopan ke TMDB; batasnya ~50 req/detik, kita jauh di bawah
 
 const jeda = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Logo diunduh untuk SEMUA judul, bukan sekian kartu pertama saja.
+//
+// Dulu hanya 8 per baris, dan sisanya diambil browser sendiri saat kartunya
+// tergulir ke layar -- artinya setiap pengunjung menembak TMDB belasan kali
+// hanya untuk menggulir satu baris. Justru itu yang paling menghabiskan kuota
+// API gratisan, bukan daftar barisnya.
+//
+// Yang membuat ini murah: satu judul muncul di beberapa baris sekaligus, jadi
+// hasilnya disimpan per judul, bukan per kartu. 700 kartu ternyata hanya ~340
+// judul unik.
+const logoJudul = new Map();
+
+async function ambilLogo(item) {
+  const kind = item.type === "SHOW" ? "tv" : "movie";
+  const kunci = `${kind}-${item.tmdbId}`;
+
+  if (logoJudul.has(kunci)) return logoJudul.get(kunci);
+
+  // null = permintaannya GAGAL, beda dengan "" yang berarti judul ini memang
+  // tidak punya logo. Yang gagal tidak ditandai logoLoaded, jadi browser masih
+  // boleh mencoba sendiri; yang memang kosong ditandai supaya tidak ditanyakan
+  // lagi selamanya.
+  let logo = null;
+  try {
+    const data = await tmdb(`/${kind}/${item.tmdbId}/images?include_image_language=id,en,null`);
+    logo = pickLogo(data.logos);
+  } catch {
+    /* logo gagal bukan alasan membuang barisnya */
+  }
+
+  logoJudul.set(kunci, logo);
+  await jeda(JEDA_MS);
+  return logo;
+}
 
 async function tmdb(path) {
   const sep = path.includes("?") ? "&" : "?";
@@ -32,21 +62,17 @@ async function tmdb(path) {
 }
 
 // Satu baris: hasil discover dinormalisasi ke bentuk yang sama persis dengan
-// yang dipakai browser, lalu logo untuk kartu-kartu awal diisi sekalian.
+// yang dipakai browser, lalu logo tiap judulnya diisi sekalian.
 async function unduhBaris(row) {
   const json = await tmdb(row.path);
   const items = (json.results || []).map((raw) => normalize(raw, row.type));
 
-  for (const item of items.slice(0, LOGO_PER_BARIS)) {
-    const kind = item.type === "SHOW" ? "tv" : "movie";
-    try {
-      const data = await tmdb(`/${kind}/${item.tmdbId}/images?include_image_language=id,en,null`);
-      item.logo = pickLogo(data.logos);
-      item.logoLoaded = true; // browser tidak perlu menanyakannya lagi, walau hasilnya kosong
-    } catch {
-      /* logo gagal bukan alasan membuang barisnya; browser akan mencoba sendiri */
-    }
-    await jeda(JEDA_MS);
+  for (const item of items) {
+    const logo = await ambilLogo(item);
+    if (logo === null) continue; // gagal -> biarkan browser yang mencoba
+
+    item.logo = logo;
+    item.logoLoaded = true; // browser tidak perlu menanyakannya lagi, walau hasilnya kosong
   }
 
   return items;
@@ -98,3 +124,7 @@ writeFileSync(
 
 const kb = Math.round(readFileSync(KELUARAN).length / 1024);
 console.log(`\nSelesai: ${berhasil} baris segar, ${gagal} gagal -> data/katalog.json (${kb} KB)`);
+
+// Item yang baru saja ditulis semuanya lahir dengan backdropLocal = false.
+// Tanpa langkah berikutnya, situs menarik gambarnya dari TMDB lagi.
+console.log("Berikutnya: npm run gambar  (menyalin gambarnya ke hosting sendiri)");

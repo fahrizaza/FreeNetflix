@@ -4,7 +4,19 @@ import * as Auth from "./auth.js";
 
 // Kunci API, daftar baris, dan bentuk baku judul tinggal di config.js karena
 // dipakai juga oleh scripts/snapshot.mjs (Node) yang mengunduh katalog harian.
-import { TMDB_KEY, TMDB, IMG, REGION, SECTIONS, normalize, pickLogo } from "./config.js";
+import {
+  TMDB_KEY,
+  TMDB,
+  IMG,
+  REGION,
+  SECTIONS,
+  normalize,
+  pickLogo,
+  gambarLokal,
+  LEBAR_KARTU,
+  LEBAR_BESAR,
+  LEBAR_LOGO,
+} from "./config.js";
 
 const PLAYER = "https://nextgencloudfabric.com/embed";
 const STORAGE_KEY = "netflix:saved";
@@ -109,6 +121,34 @@ async function fetchList(path, forcedType = "") {
 // normalize dan pickLogo kini tinggal di config.js, dipakai bersama skrip
 // snapshot -- keduanya harus menghasilkan bentuk judul yang persis sama.
 
+// ---------- Gambar: salinan lokal kalau ada, TMDB kalau tidak ----------
+// Judul dari katalog harian punya salinan WebP di hosting sendiri, pada ukuran
+// yang memang dipakai layarnya. Judul dari kotak pencarian tidak punya --
+// itulah gunanya penanda backdropLocal / logoLocal, bukan menebak dari URL.
+//
+// Kartu memakai lebar 480, bukan 780 seperti hero. Kartu paling besar 240px,
+// jadi 780 berarti mengunduh empat kali piksel yang benar-benar terlihat.
+const gambarKartu = (item) =>
+  item.backdropLocal ? gambarLokal(item.backdrop, "bd", LEBAR_KARTU) : item.backdrop;
+
+const gambarBesar = (item) =>
+  item.backdropLocal ? gambarLokal(item.backdrop, "bd", LEBAR_BESAR) : item.backdrop;
+
+const gambarLogo = (item) =>
+  item.logoLocal ? gambarLokal(item.logo, "logo", LEBAR_LOGO) : item.logo;
+
+// Satu-satunya tempat yang boleh mengganti logo sebuah judul saat aplikasi
+// berjalan. Salinan lokal itu milik URL yang LAMA: kalau TMDB memberi logo
+// yang berbeda, penandanya harus gugur, kalau tidak kartunya menunjuk berkas
+// yang tidak pernah ada. Kalau URL-nya sama persis -- kasus yang paling sering,
+// karena snapshot memakai endpoint yang sama -- salinan lokalnya dipertahankan.
+function pasangLogo(item, url) {
+  if (url !== item.logo) item.logoLocal = false;
+
+  item.logo = url;
+  item.logoLoaded = true;
+}
+
 // Trailer resmi terbaru diutamakan; teaser dipakai kalau trailer tidak ada.
 // Banyak judul non-Inggris memang tidak punya video sama sekali -> "" dan
 // pratinjaunya tetap gambar diam.
@@ -145,8 +185,7 @@ async function fetchDetail(item) {
   readCert(item, (tv ? data.content_ratings : data.release_dates)?.results);
 
   item.trailer = pickTrailer(data.videos?.results);
-  item.logo = pickLogo(data.images?.logos);
-  item.logoLoaded = true; // kartu di baris ikut memakai hasil ini
+  pasangLogo(item, pickLogo(data.images?.logos)); // kartu di baris ikut memakai hasil ini
 
   item.imdbId = data.external_ids?.imdb_id || "";
   item.overview = data.overview || item.overview;
@@ -531,7 +570,8 @@ function cardTemplate(item, opts = {}) {
     : "";
 
   const image = item.backdrop
-    ? `<img src="${esc(item.backdrop)}" alt="${esc(item.title)}" loading="lazy"
+    ? `<img src="${esc(gambarKartu(item))}" alt="${esc(item.title)}" loading="lazy"
+         decoding="async" width="480" height="270"
          class="h-full w-full object-cover transition duration-300 group-hover/card:scale-105" />`
     : `<div class="flex h-full w-full items-center justify-center px-3 text-center text-sm text-neutral-500">${esc(item.title)}</div>`;
 
@@ -607,13 +647,12 @@ async function fetchLogo(item) {
   const kind = item.type === "SHOW" ? "tv" : "movie";
   try {
     const data = await tmdb(`/${kind}/${item.tmdbId}/images?include_image_language=id,en,null`);
-    item.logo = pickLogo(data.logos);
+    pasangLogo(item, pickLogo(data.logos));
   } catch (err) {
-    item.logo = "";
+    pasangLogo(item, "");
     console.error(`Logo "${item.title}" gagal dimuat`, err);
   }
 
-  item.logoLoaded = true;
   catalog.set(item.id, item);
   return item.logo;
 }
@@ -622,7 +661,8 @@ function paintLogo(key, item) {
   const slot = document.querySelector(`[data-row="${key}"] [data-id="${item.id}"] [data-logo]`);
   if (!slot || !item.logo) return;
 
-  slot.innerHTML = `<img src="${esc(item.logo)}" alt="${esc(item.title)}"
+  slot.innerHTML = `<img src="${esc(gambarLogo(item))}" alt="${esc(item.title)}" loading="lazy"
+    decoding="async"
     class="max-h-10 w-auto max-w-[85%] object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)] sm:max-h-14 md:max-h-16" />`;
 }
 
@@ -763,7 +803,8 @@ function orderPinnedRows() {
 // ---------- Modal detail ----------
 function stageImage(item) {
   return item.backdrop
-    ? `<img src="${esc(item.backdrop)}" alt="${esc(item.title)}" class="h-full w-full object-cover" />`
+    ? `<img src="${esc(gambarBesar(item))}" alt="${esc(item.title)}" decoding="async"
+         class="h-full w-full object-cover" />`
     : `<div class="flex h-full w-full items-center justify-center bg-neutral-800 text-sm text-neutral-500">${esc(item.title)}</div>`;
 }
 
@@ -1318,7 +1359,7 @@ async function loadDetail(item, modal) {
   if (item.logo) {
     set(
       "[data-title]",
-      `<img src="${esc(item.logo)}" alt="${esc(item.title)}"
+      `<img src="${esc(gambarLogo(item))}" alt="${esc(item.title)}" decoding="async"
          class="max-h-20 w-auto max-w-full object-contain object-left drop-shadow-lg md:max-h-28" />`
     );
   }
@@ -2100,7 +2141,7 @@ async function lanjutkanPemutaran(item, ep) {
       class="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black">
       ${
         item.backdrop
-          ? `<img src="${esc(item.backdrop)}" alt="" aria-hidden="true"
+          ? `<img src="${esc(gambarBesar(item))}" alt="" aria-hidden="true" decoding="async"
                class="absolute inset-0 h-full w-full object-cover opacity-25" />`
           : ""
       }
@@ -2942,7 +2983,7 @@ function fillHero(item) {
   if (!item) return;
 
   document.getElementById("hero").style.backgroundImage =
-    `linear-gradient(to top, rgba(0,0,0,.85), rgba(0,0,0,.1)), url('${item.backdrop}')`;
+    `linear-gradient(to top, rgba(0,0,0,.85), rgba(0,0,0,.1)), url('${gambarBesar(item)}')`;
   document.getElementById("hero-title").textContent = item.title;
   document.getElementById("hero-meta").innerHTML = [
     item.type === "SHOW" ? "Series" : "Movie",
@@ -2966,7 +3007,7 @@ function fillHero(item) {
 
       if (item.logo) {
         document.getElementById("hero-title").innerHTML =
-          `<img src="${esc(item.logo)}" alt="${esc(item.title)}"
+          `<img src="${esc(gambarLogo(item))}" alt="${esc(item.title)}" decoding="async"
              class="max-h-24 w-auto max-w-md object-contain object-left drop-shadow-lg md:max-h-32" />`;
       }
     })
@@ -3381,6 +3422,12 @@ async function ambilItemBaris(row) {
   return fetchList(row.path + maturityParams(row.type), row.type);
 }
 
+// Kartu yang benar-benar digambar per baris. TMDB dan snapshot sama-sama
+// memberi 20; sisanya sengaja tidak dipakai dan jadi cadangan -- saringan umur
+// dan tahun di bawah membuang sebagian judul, dan tanpa cadangan itu baris
+// profil anak bisa tinggal belasan kartu.
+const PER_BARIS = 15;
+
 // Memuat satu baris sampai tergambar. Mengembalikan false kalau hasilnya basi
 // (profil sudah berganti) -- pemanggil yang memutuskan berhenti atau lanjut.
 async function muatSatuBaris(row, token) {
@@ -3406,6 +3453,10 @@ async function muatSatuBaris(row, token) {
   // sudah memakai primary_release_date.gte sendiri, dan snapshot memang tidak
   // membawa parameter apa-apa.
   items = items.filter(tahunLolos);
+
+  // Dipotong SETELAH semua saringan, bukan sebelumnya: kalau dipotong duluan,
+  // judul yang dibuang saringan tidak tergantikan dan barisnya jadi pendek.
+  items = items.slice(0, PER_BARIS);
 
   // hasil basi dari profil sebelumnya tidak boleh ditulis
   if (token !== rowsToken || Auth.maturityLimit() !== limit) return false;

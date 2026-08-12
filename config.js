@@ -90,7 +90,6 @@ const ROWS = [
   movieRow("h-komedi", "Bikin Tertawa", "with_genres=35&sort_by=popularity.desc"),
   movieRow("h-horor", "Horor & Thriller", "with_genres=27&sort_by=popularity.desc"),
   movieRow("h-scifi", "Sci-Fi & Fantasi", "with_genres=878&sort_by=popularity.desc"),
-  movieRow("h-top", "Pujian Kritikus", "vote_count.gte=500&sort_by=vote_average.desc"),
 ];
 
 export const SECTIONS = [
@@ -113,8 +112,8 @@ export const SECTIONS = [
     key: "movies",
     label: "Movies",
     // Film Indonesia dan Korea sengaja dipecah per genre, bukan satu baris
-    // campur: 20 judul "Film Indonesia" habis sekali gulir, sedangkan empat
-    // baris bergenre memberi 80 judul tanpa terasa berulang.
+    // campur: 15 judul "Film Indonesia" habis sekali gulir, sedangkan empat
+    // baris bergenre memberi 60 judul tanpa terasa berulang.
     rows: [
       movieRow("m-pop", "Film Populer", "sort_by=popularity.desc"),
       movieRow("m-local", "Film Indonesia", "with_original_language=id&sort_by=popularity.desc"),
@@ -144,6 +143,43 @@ export const SECTIONS = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Gambar yang disalin ke hosting sendiri
+//
+// katalog.json TETAP menyimpan URL TMDB yang asli, bukan jalur lokal. Yang
+// disimpan hanya penanda backdropLocal / logoLocal: "salinan lokal untuk URL
+// ini sudah ada". Jalurnya dihitung ulang dari URL itu lewat gambarLokal().
+//
+// Dibuat begitu supaya scripts/gambar.mjs boleh dijalankan berkali-kali tanpa
+// merusak apa pun: kalau jalurnya yang ditulis, jalankan kedua kalinya skrip
+// itu akan membaca jalur lokal dan kehilangan alamat asalnya di TMDB.
+// Penanda juga membuat kegagalan unduh jadi tidak berbahaya -- penandanya
+// tidak dipasang, dan kartunya jatuh kembali ke TMDB dengan sendirinya.
+// ---------------------------------------------------------------------------
+export const GAMBAR_DIR = "assets/img";
+
+// Kartu di baris lebarnya paling besar 240px CSS; 480 memberi ketajaman penuh
+// di layar 2x tanpa mengunduh piksel yang tidak pernah terlihat.
+export const LEBAR_KARTU = 480;
+
+// Hero, latar pemutar, dan panggung modal detail. Sama dengan w780 TMDB yang
+// dipakai sebelumnya, jadi tidak ada penurunan ketajaman di mana pun.
+export const LEBAR_BESAR = 780;
+
+export const LEBAR_LOGO = 400;
+
+// URL TMDB -> jalur berkas lokal. Nama berkasnya diambil dari nama berkas TMDB,
+// yang sudah unik per gambar: kalau sampul sebuah judul diganti, TMDB memberi
+// nama baru, jadi tidak ada cache basi yang perlu diurus.
+export function gambarLokal(url, jenis, lebar) {
+  if (!url) return "";
+
+  const nama = url.split("/").pop().replace(/\.[^.]+$/, "");
+  if (!nama) return "";
+
+  return `${GAMBAR_DIR}/${jenis}/${nama}-${lebar}.webp`;
+}
+
 // Bentuk baku sebuah judul di seluruh aplikasi. Snapshot menyimpan persis
 // bentuk ini supaya browser bisa memakainya tanpa diolah lagi.
 export function normalize(raw, forcedType = "") {
@@ -161,6 +197,10 @@ export function normalize(raw, forcedType = "") {
     overview: raw.overview || "",
     poster: raw.poster_path ? `${IMG}/w500${raw.poster_path}` : "",
     backdrop: raw.backdrop_path ? `${IMG}/w780${raw.backdrop_path}` : "",
+    // dipasang scripts/gambar.mjs kalau salinan lokalnya benar-benar jadi;
+    // judul dari pencarian langsung tidak punya salinan, jadi tetap false
+    backdropLocal: false,
+    logoLocal: false,
     rating: raw.vote_average ? Math.round(raw.vote_average * 10) : null,
     logo: "",
     logoLoaded: false,

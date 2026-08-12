@@ -5,6 +5,7 @@
   "scripts": {
     "build": "tailwindcss -i src/input.css -o src/output.css",
     "snapshot": "node scripts/snapshot.mjs",
+    "gambar": "node scripts/gambar.mjs",
     "watch": "tailwindcss -i src/input.css -o src/output.css --watch",
     "push": "node scripts/push.mjs",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -15,6 +16,7 @@
   "description": "",
   "dependencies": {
     "@tailwindcss/cli": "^4.3.3",
+    "sharp": "^0.35.3",
     "tailwindcss": "^4.3.3"
   }
 }

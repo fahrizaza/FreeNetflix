@@ -1,0 +1,23 @@
+# Gambar katalog yang disalin dari TMDB oleh scripts/gambar.mjs.
+#
+# Nama berkas di sini berasal dari nama berkas TMDB ditambah lebarnya, misalnya
+# wwemzKWzjKYJFfCeiB57q3r4Bcm-480.webp. Nama itu tidak pernah dipakai ulang
+# untuk gambar yang berbeda: kalau sampul sebuah judul diganti, TMDB memberi
+# nama baru, dan berkas lama dibuang skripnya.
+#
+# Karena itu isinya benar-benar tetap, dan browser boleh menyimpannya setahun
+# tanpa pernah menanyakannya lagi. "immutable" itu bagian pentingnya: tanpa itu
+# browser tetap mengirim permintaan validasi setiap kali halaman disegarkan --
+# 700 permintaan 304 yang semuanya menjawab "tidak ada yang berubah".
+
+# Sengaja hanya dua baris. Berkas ini berdiri di depan SELURUH gambar situs:
+# satu directive yang tidak dikenal server akan membalas 500 untuk semuanya
+# sekaligus, dan halamannya jadi kosong tanpa gambar tanpa petunjuk apa pun.
+# Karena itu tidak ada Options, tidak ada SetEnvIf -- keduanya tidak
+# menambah apa-apa di sini. WebP juga tidak perlu dikecualikan dari kompresi:
+# daftar DEFLATE di .htaccess akar memang hanya menyebut tipe teks.
+<IfModule mod_headers.c>
+  Header set Cache-Control "public, max-age=31536000, immutable"
+</IfModule>
+
+AddType image/webp .webp

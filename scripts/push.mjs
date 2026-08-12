@@ -78,6 +78,8 @@ try {
   /* belum ada snapshot sama sekali */
 }
 
+let snapshotBaru = false;
+
 if (umurJam > BATAS_SEGAR_JAM) {
   kabar(umurJam === Infinity
     ? "Snapshot katalog belum ada; mengunduh dari TMDB..."
@@ -85,11 +87,58 @@ if (umurJam > BATAS_SEGAR_JAM) {
   try {
     jalankan("node scripts/snapshot.mjs");
     beres("Snapshot katalog segar");
+    snapshotBaru = true;
   } catch {
     console.log(`${KUNING}! Snapshot gagal diunduh; memakai data lama.${RESET}`);
   }
 } else {
   catat(`snapshot katalog masih segar (${Math.round(umurJam)} jam)`);
+}
+
+// ---------------------------------------------------------------------------
+// 0b. Salin gambar katalog ke hosting sendiri.
+//
+// Dua pemicu, dan yang pertama bukan soal jadwal melainkan soal benar-salah:
+//
+//   snapshot baru -> WAJIB. snapshot.mjs menulis item yang segar, dan item
+//   segar selalu lahir dengan backdropLocal = false. Kalau gambar.mjs tidak
+//   ikut jalan, seluruh situs diam-diam kembali menarik gambar dari TMDB --
+//   tanpa satu pun galat yang kelihatan.
+//
+//   tiap 3 hari -> penyegaran yang diminta. Isinya bukan mengunduh ulang
+//   (nama berkas gambar tidak pernah berubah isinya), melainkan memastikan
+//   tidak ada berkas yang hilang dan membuang gambar judul yang sudah keluar
+//   dari katalog.
+//
+// Sama seperti snapshot: gagal di sini tidak boleh menahan push. Tanpa salinan
+// lokal, kartunya kembali memakai TMDB -- lebih berat, tapi tetap jalan.
+// ---------------------------------------------------------------------------
+const BATAS_GAMBAR_JAM = 72;
+
+let umurGambar = Infinity;
+try {
+  const { generatedAt } = JSON.parse(readFileSync("data/gambar.json", "utf8"));
+  umurGambar = (Date.now() - Date.parse(generatedAt)) / 36e5;
+} catch {
+  /* belum pernah menyalin gambar */
+}
+
+const perluGambar = snapshotBaru || umurGambar > BATAS_GAMBAR_JAM;
+
+if (perluGambar) {
+  kabar(
+    snapshotBaru
+      ? "Katalog baru; menyalin gambar yang belum ada..."
+      : `Salinan gambar berumur ${Math.round(umurGambar)} jam; memeriksa ulang...`
+  );
+  try {
+    jalankan("node scripts/gambar.mjs");
+    beres("Gambar katalog tersalin");
+  } catch {
+    console.log(`${KUNING}! Penyalinan gambar gagal; kartu memakai gambar TMDB.${RESET}`);
+  }
+} else {
+  catat(`salinan gambar masih segar (${Math.round(umurGambar)} jam dari ${BATAS_GAMBAR_JAM})`);
 }
 
 // ---------------------------------------------------------------------------
